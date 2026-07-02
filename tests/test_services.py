@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from attendance_app.config import Settings
 from attendance_app.database import AttendanceRepository
 from attendance_app.services import (
+    otp_delivery_configuration_error,
     resolve_student_access_context,
     stamp_attendance,
     verify_login_code_for_access_context,
@@ -214,6 +215,49 @@ class ServicesTestCase(unittest.TestCase):
                 (6, "L1", "07:30", "08:20"),
             ],
         )
+
+    def test_otp_delivery_configuration_error_flags_production_console_mode(self) -> None:
+        production_settings = Settings(
+            app_env="production",
+            app_timezone="Asia/Riyadh",
+            database_path=f"{self.temp_dir.name}/attendance.db",
+            manager_username="manager_user",
+            manager_password_hash="unused",
+            otp_delivery_mode="console",
+            otp_expiry_minutes=10,
+            otp_pepper="pepper",
+            smtp_host="",
+            smtp_port=587,
+            smtp_username="",
+            smtp_password="",
+            smtp_sender="",
+            smtp_use_tls=True,
+        )
+
+        error = otp_delivery_configuration_error(production_settings)
+        self.assertIsNotNone(error)
+        assert error is not None
+        self.assertIn("console OTP mode", error)
+
+    def test_otp_delivery_configuration_error_accepts_complete_email_settings(self) -> None:
+        email_settings = Settings(
+            app_env="production",
+            app_timezone="Asia/Riyadh",
+            database_path=f"{self.temp_dir.name}/attendance.db",
+            manager_username="manager_user",
+            manager_password_hash="unused",
+            otp_delivery_mode="email",
+            otp_expiry_minutes=10,
+            otp_pepper="pepper",
+            smtp_host="smtp.example.edu",
+            smtp_port=587,
+            smtp_username="mailer@example.edu",
+            smtp_password="password",
+            smtp_sender="mailer@example.edu",
+            smtp_use_tls=True,
+        )
+
+        self.assertIsNone(otp_delivery_configuration_error(email_settings))
 
     def _seed_course(self, *, end_date: str = "2026-07-31"):
         created_at = "2026-06-25T08:00:00+03:00"

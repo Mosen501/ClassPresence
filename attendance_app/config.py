@@ -25,15 +25,21 @@ class Settings:
     smtp_sender: str
     smtp_use_tls: bool
 
+    @property
+    def is_development(self) -> bool:
+        return self.app_env.strip().lower() == "development"
+
 
 def load_settings(secrets: Mapping[str, Any] | None = None) -> Settings:
+    app_env = _get_value("APP_ENV", "development", secrets)
+    default_otp_delivery_mode = "console" if app_env.strip().lower() == "development" else "email"
     return Settings(
-        app_env=_get_value("APP_ENV", "development", secrets),
+        app_env=app_env,
         app_timezone=_get_value("APP_TIMEZONE", "Asia/Riyadh", secrets),
         database_path=_get_value("ATTENDANCE_DB_PATH", "attendance.db", secrets),
         manager_username=_get_value("MANAGER_USERNAME", "", secrets),
         manager_password_hash=_get_value("MANAGER_PASSWORD_HASH", "", secrets),
-        otp_delivery_mode=_get_value("OTP_DELIVERY_MODE", "console", secrets).lower(),
+        otp_delivery_mode=_get_value("OTP_DELIVERY_MODE", default_otp_delivery_mode, secrets).lower(),
         otp_expiry_minutes=int(_get_value("OTP_EXPIRY_MINUTES", "10", secrets)),
         otp_pepper=_get_value("OTP_PEPPER", "change-me", secrets),
         smtp_host=_get_value("SMTP_HOST", "", secrets),

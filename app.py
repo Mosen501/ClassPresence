@@ -15,6 +15,7 @@ from attendance_app.services import (
     build_student_attendance_summary,
     find_active_schedule,
     now_in_app_timezone,
+    otp_delivery_configuration_error,
     request_login_code_for_access_context,
     resolve_student_access_context,
     seed_demo_data,
@@ -385,6 +386,7 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
         "Student access is available only during the active class timetable in Riyadh time and "
         "only from inside the classroom radius defined by the manager."
     )
+    _render_otp_delivery_notice(settings)
 
     auth = st.session_state.get("student_auth")
     if not auth:
@@ -563,6 +565,18 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
         f"{access_context['schedule_end_time']})."
     )
 
+    otp_notice = st.session_state.get("student_otp_notice")
+    if otp_notice:
+        st.success(otp_notice)
+    otp_preview_code = st.session_state.get("student_otp_preview_code")
+    if otp_preview_code:
+        st.text_input(
+            "Development OTP preview",
+            value=otp_preview_code,
+            key="student_otp_preview_display",
+            help="This appears only in local development when OTP delivery mode is console.",
+        )
+
     if not st.session_state.get("student_otp_requested", False):
         st.markdown(
             """
@@ -574,6 +588,10 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
             """,
             unsafe_allow_html=True,
         )
+        configuration_error = otp_delivery_configuration_error(settings)
+        if configuration_error:
+            st.error(configuration_error)
+            return
         if st.button("Generate OTP via email", use_container_width=True):
             try:
                 result = request_login_code_for_access_context(
@@ -582,10 +600,9 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
                     access_context=_build_access_context_object(access_context),
                 )
                 st.session_state["student_otp_requested"] = True
-                st.success(result.message)
-                if result.preview_code:
-                    st.info("Development preview code")
-                    st.code(result.preview_code)
+                st.session_state["student_otp_notice"] = result.message
+                st.session_state["student_otp_preview_code"] = result.preview_code
+                st.rerun()
             except Exception as error:  # pragma: no cover - Streamlit surface
                 st.error(str(error))
         return
@@ -616,6 +633,8 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
             }
             st.session_state["student_stamp_result"] = None
             st.session_state["student_stamp_geolocation"] = None
+            st.session_state["student_otp_notice"] = None
+            st.session_state["student_otp_preview_code"] = None
             st.rerun()
         except Exception as error:  # pragma: no cover - Streamlit surface
             st.error(str(error))
@@ -890,6 +909,15 @@ def _render_manager_auth(settings) -> bool:
     return False
 
 
+def _render_otp_delivery_notice(settings) -> None:
+    configuration_error = otp_delivery_configuration_error(settings)
+    if configuration_error:
+        st.warning(configuration_error)
+        return
+    if settings.otp_delivery_mode == "console":
+        st.info("Development mode is showing OTP codes in-app instead of sending email.")
+
+
 def _build_timetable_editor_rows(schedules) -> list[dict[str, object]]:
     rows_by_label: dict[str, dict[str, object]] = {}
     ordered_labels: list[str] = []
@@ -1143,6 +1171,8 @@ def _reset_student_access_flow(*, clear_student_id: bool) -> None:
     st.session_state["student_access_context"] = None
     st.session_state["student_access_geolocation"] = None
     st.session_state["student_otp_requested"] = False
+    st.session_state["student_otp_notice"] = None
+    st.session_state["student_otp_preview_code"] = None
     st.session_state["student_stamp_result"] = None
     st.session_state["student_stamp_geolocation"] = None
     st.session_state["student_access_geo_processed_at"] = None
@@ -1197,6 +1227,8 @@ def _init_session_state() -> None:
     st.session_state.setdefault("student_access_geolocation", None)
     st.session_state.setdefault("student_access_geo_processed_at", None)
     st.session_state.setdefault("student_otp_requested", False)
+    st.session_state.setdefault("student_otp_notice", None)
+    st.session_state.setdefault("student_otp_preview_code", None)
     st.session_state.setdefault("student_stamp_result", None)
     st.session_state.setdefault("student_stamp_geolocation", None)
     st.session_state.setdefault("student_stamp_geo_processed_at", None)

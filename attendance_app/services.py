@@ -53,6 +53,29 @@ class StudentAccessContext:
     radius_m: float
 
 
+def otp_delivery_configuration_error(settings: Settings) -> str | None:
+    if settings.otp_delivery_mode == "console":
+        if settings.is_development:
+            return None
+        return (
+            "This deployment is still using console OTP mode. Set `OTP_DELIVERY_MODE=\"email\"` "
+            "and add your SMTP settings in Streamlit Community Cloud secrets."
+        )
+
+    if settings.otp_delivery_mode != "email":
+        return (
+            "Unsupported OTP delivery mode. Use `email` for production deployments or `console` "
+            "only for local development."
+        )
+
+    if not settings.smtp_host or not settings.smtp_sender:
+        return (
+            "Email OTP is enabled, but SMTP settings are incomplete. Add `SMTP_HOST`, "
+            "`SMTP_SENDER`, and any required SMTP credentials in Streamlit secrets."
+        )
+    return None
+
+
 def now_in_app_timezone(settings: Settings) -> datetime:
     return datetime.now(ZoneInfo(settings.app_timezone))
 
@@ -538,6 +561,10 @@ def _issue_login_code(
     course,
     student,
 ) -> OTPRequestResult:
+    configuration_error = otp_delivery_configuration_error(settings)
+    if configuration_error:
+        raise RuntimeError(configuration_error)
+
     if settings.otp_delivery_mode == "email" and not student["email"]:
         raise ValueError("This student does not have an email address configured.")
 
