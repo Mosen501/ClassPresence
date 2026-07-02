@@ -13,13 +13,22 @@ from attendance_app.utils import (
 )
 
 
+TEST_POINT_LATITUDE = 1.234567
+TEST_POINT_LONGITUDE = -2.345678
+
+
 class UtilsTestCase(unittest.TestCase):
     def test_hash_otp_is_deterministic(self) -> None:
         self.assertEqual(hash_otp("123456", "pepper"), hash_otp("123456", "pepper"))
         self.assertNotEqual(hash_otp("123456", "pepper"), hash_otp("654321", "pepper"))
 
     def test_haversine_distance_is_zero_for_same_point(self) -> None:
-        distance = haversine_distance_m(40.7128, -74.0060, 40.7128, -74.0060)
+        distance = haversine_distance_m(
+            TEST_POINT_LATITUDE,
+            TEST_POINT_LONGITUDE,
+            TEST_POINT_LATITUDE,
+            TEST_POINT_LONGITUDE,
+        )
         self.assertAlmostEqual(distance, 0.0, places=6)
 
     def test_generate_expected_occurrences_ignores_future_window_today(self) -> None:

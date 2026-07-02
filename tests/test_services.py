@@ -16,6 +16,10 @@ from attendance_app.services import (
 from attendance_app.utils import hash_otp
 
 
+TEST_COURSE_LATITUDE = 1.234567
+TEST_COURSE_LONGITUDE = -2.345678
+
+
 class ServicesTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -51,8 +55,8 @@ class ServicesTestCase(unittest.TestCase):
                 self.settings,
                 university_id="20260001",
                 geolocation_payload={
-                    "latitude": 24.7136,
-                    "longitude": 46.6753,
+                    "latitude": TEST_COURSE_LATITUDE,
+                    "longitude": TEST_COURSE_LONGITUDE,
                     "captured_at": now.isoformat(),
                 },
             )
@@ -100,8 +104,8 @@ class ServicesTestCase(unittest.TestCase):
                 course=course,
                 student=student,
                 geolocation_payload={
-                    "latitude": 24.7136,
-                    "longitude": 46.6753,
+                    "latitude": TEST_COURSE_LATITUDE,
+                    "longitude": TEST_COURSE_LONGITUDE,
                     "captured_at": "2026-07-01T10:00:00+03:00",
                 },
             )
@@ -219,8 +223,8 @@ class ServicesTestCase(unittest.TestCase):
             start_date="2026-07-01",
             end_date=end_date,
             total_meetings=1,
-            latitude=24.7136,
-            longitude=46.6753,
+            latitude=TEST_COURSE_LATITUDE,
+            longitude=TEST_COURSE_LONGITUDE,
             radius_m=3.0,
             absence_limit_pct=20.0,
             created_at=created_at,
