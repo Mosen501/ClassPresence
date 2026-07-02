@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Geolocation Capture</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background: transparent;
+        color: #16362d;
+      }
+      .panel {
+        border: 1px solid rgba(19, 42, 37, 0.12);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.88);
+        padding: 14px;
+      }
+      button {
+        width: 100%;
+        border: none;
+        border-radius: 12px;
+        background: #0f766e;
+        color: #ffffff;
+        padding: 12px 14px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0d645d;
+      }
+      button:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
+      p {
+        margin: 10px 0 0;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <button id="captureButton" type="button">Share location</button>
+      <p id="statusText">
+        Browser permission is required. The app uses your coordinates only to validate distance.
+      </p>
+    </div>
+    <script>
+      const button = document.getElementById("captureButton");
+      const statusText = document.getElementById("statusText");
+
+      function sendMessageToStreamlitClient(type, data) {
+        const payload = Object.assign(
+          {
+            isStreamlitMessage: true,
+            type: type,
+          },
+          data
+        );
+        window.parent.postMessage(payload, "*");
+      }
+
+      function setComponentValue(value) {
+        sendMessageToStreamlitClient("streamlit:setComponentValue", { value });
+      }
+
+      function setFrameHeight(height) {
+        sendMessageToStreamlitClient("streamlit:setFrameHeight", { height });
+      }
+
+      function initializeComponent() {
+        sendMessageToStreamlitClient("streamlit:componentReady", { apiVersion: 1 });
+        setFrameHeight(document.body.scrollHeight);
+      }
+
+      function setStatus(message) {
+        statusText.textContent = message;
+        setFrameHeight(document.body.scrollHeight);
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.data.type !== "streamlit:render") {
+          return;
+        }
+        const buttonLabel = event.data.args.buttonLabel || "Share location";
+        button.textContent = buttonLabel;
+        setFrameHeight(document.body.scrollHeight);
+      });
+
+      button.addEventListener("click", () => {
+        if (!navigator.geolocation) {
+          const errorMessage = "This browser does not support geolocation.";
+          setStatus(errorMessage);
+          setComponentValue({
+            error: errorMessage,
+            captured_at: new Date().toISOString(),
+          });
+          return;
+        }
+
+        button.disabled = true;
+        setStatus("Requesting device location...");
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const payload = {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              accuracy_m: position.coords.accuracy,
+              captured_at: new Date().toISOString(),
+              user_agent: navigator.userAgent,
+              platform: navigator.userAgentData?.platform || navigator.platform || "",
+              language: navigator.language,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              screen_width: window.screen.width,
+              screen_height: window.screen.height,
+            };
+            setStatus("Location captured. The app will validate the attendance stamp now.");
+            setComponentValue(payload);
+            button.disabled = false;
+          },
+          (error) => {
+            const message = error.message || "Unable to retrieve your location.";
+            setStatus(message);
+            setComponentValue({
+              error: message,
+              captured_at: new Date().toISOString(),
+            });
+            button.disabled = false;
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 0,
+          }
+        );
+      });
+
+      initializeComponent();
+    </script>
+  </body>
+</html>
+

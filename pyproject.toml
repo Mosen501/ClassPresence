@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "attendancapp"
+version = "0.1.0"
+description = "Geofenced attendance tracking for academic courses"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "streamlit>=1.36,<2.0",
+  "openpyxl>=3.1,<4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["attendance_app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

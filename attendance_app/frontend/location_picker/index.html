@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Location Picker</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <style>
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background: transparent;
+        color: #16362d;
+      }
+      .panel {
+        border: 1px solid rgba(19, 42, 37, 0.12);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.88);
+        padding: 14px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+      }
+      button {
+        border: none;
+        border-radius: 12px;
+        background: #0f766e;
+        color: #ffffff;
+        padding: 10px 14px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0d645d;
+      }
+      button:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
+      #map {
+        width: 100%;
+        height: 360px;
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      .hint {
+        margin: 10px 0 0;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .coords {
+        font-size: 13px;
+        color: #27443b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="toolbar">
+        <button id="useLocationButton" type="button">Use my location</button>
+        <span class="coords" id="coordsText">Click the map to choose the classroom point.</span>
+      </div>
+      <div id="map"></div>
+      <p class="hint" id="statusText">
+        Click anywhere on the map to set the attendance location. A small circle shows the allowed
+        radius.
+      </p>
+    </div>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script>
+      let map;
+      let marker;
+      let radiusCircle;
+      let latestArgs = {
+        latitude: 0,
+        longitude: 0,
+        radiusM: 3,
+        hasSelection: false,
+      };
+
+      const useLocationButton = document.getElementById("useLocationButton");
+      const coordsText = document.getElementById("coordsText");
+      const statusText = document.getElementById("statusText");
+
+      function sendMessageToStreamlitClient(type, data) {
+        const payload = Object.assign(
+          {
+            isStreamlitMessage: true,
+            type: type,
+          },
+          data
+        );
+        window.parent.postMessage(payload, "*");
+      }
+
+      function setComponentValue(value) {
+        sendMessageToStreamlitClient("streamlit:setComponentValue", { value });
+      }
+
+      function setFrameHeight(height) {
+        sendMessageToStreamlitClient("streamlit:setFrameHeight", { height });
+      }
+
+      function initializeComponent() {
+        sendMessageToStreamlitClient("streamlit:componentReady", { apiVersion: 1 });
+        setFrameHeight(document.body.scrollHeight);
+      }
+
+      function setStatus(message) {
+        statusText.textContent = message;
+        setFrameHeight(document.body.scrollHeight);
+      }
+
+      function setCoordsText(latitude, longitude) {
+        coordsText.textContent = `Selected: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+      }
+
+      function ensureMap() {
+        if (map) {
+          return;
+        }
+
+        map = L.map("map");
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 20,
+        }).addTo(map);
+
+        map.setView([0, 0], 2);
+        map.on("click", (event) => {
+          updateSelection(event.latlng.lat, event.latlng.lng, "map_click");
+        });
+        setTimeout(() => map.invalidateSize(), 0);
+      }
+
+      function drawSelection(latitude, longitude, shouldCenter) {
+        ensureMap();
+
+        if (marker) {
+          marker.setLatLng([latitude, longitude]);
+        } else {
+          marker = L.marker([latitude, longitude]).addTo(map);
+        }
+
+        if (radiusCircle) {
+          radiusCircle.setLatLng([latitude, longitude]);
+          radiusCircle.setRadius(Number(latestArgs.radiusM || 3));
+        } else {
+          radiusCircle = L.circle([latitude, longitude], {
+            radius: Number(latestArgs.radiusM || 3),
+            color: "#0f766e",
+            fillColor: "#0f766e",
+            fillOpacity: 0.18,
+            weight: 2,
+          }).addTo(map);
+        }
+
+        if (shouldCenter) {
+          map.setView([latitude, longitude], 19);
+        }
+        setCoordsText(latitude, longitude);
+      }
+
+      function updateSelection(latitude, longitude, source) {
+        drawSelection(latitude, longitude, true);
+        setStatus("Classroom location updated.");
+        setComponentValue({
+          latitude,
+          longitude,
+          source,
+          captured_at: new Date().toISOString(),
+        });
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.data.type !== "streamlit:render") {
+          return;
+        }
+
+        latestArgs = Object.assign({}, latestArgs, event.data.args || {});
+        ensureMap();
+
+        if (latestArgs.hasSelection) {
+          drawSelection(Number(latestArgs.latitude), Number(latestArgs.longitude), false);
+        } else {
+          coordsText.textContent = "Click the map to choose the classroom point.";
+          if (marker) {
+            map.removeLayer(marker);
+            marker = null;
+          }
+          if (radiusCircle) {
+            map.removeLayer(radiusCircle);
+            radiusCircle = null;
+          }
+          map.setView([0, 0], 2);
+        }
+        setFrameHeight(document.body.scrollHeight);
+      });
+
+      useLocationButton.addEventListener("click", () => {
+        if (!navigator.geolocation) {
+          setStatus("This browser does not support geolocation.");
+          return;
+        }
+
+        useLocationButton.disabled = true;
+        setStatus("Requesting your current location...");
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            updateSelection(position.coords.latitude, position.coords.longitude, "device_location");
+            useLocationButton.disabled = false;
+          },
+          (error) => {
+            setStatus(error.message || "Unable to retrieve your current location.");
+            useLocationButton.disabled = false;
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 0,
+          }
+        );
+      });
+
+      initializeComponent();
+    </script>
+  </body>
+</html>

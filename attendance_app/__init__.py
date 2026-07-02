@@ -1,0 +1,2 @@
+"""AttendancApp package."""
+
