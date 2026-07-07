@@ -29,7 +29,7 @@ class ServicesTestCase(unittest.TestCase):
         self.settings = Settings(
             app_env="development",
             app_timezone="Asia/Riyadh",
-            database_path=f"{self.temp_dir.name}/attendance.db",
+            database_target=f"{self.temp_dir.name}/attendance.db",
             manager_username="manager_user",
             manager_password_hash="unused",
             otp_delivery_mode="console",
@@ -220,7 +220,7 @@ class ServicesTestCase(unittest.TestCase):
         production_settings = Settings(
             app_env="production",
             app_timezone="Asia/Riyadh",
-            database_path=f"{self.temp_dir.name}/attendance.db",
+            database_target=f"{self.temp_dir.name}/attendance.db",
             manager_username="manager_user",
             manager_password_hash="unused",
             otp_delivery_mode="console",
@@ -243,7 +243,7 @@ class ServicesTestCase(unittest.TestCase):
         email_settings = Settings(
             app_env="production",
             app_timezone="Asia/Riyadh",
-            database_path=f"{self.temp_dir.name}/attendance.db",
+            database_target=f"{self.temp_dir.name}/attendance.db",
             manager_username="manager_user",
             manager_password_hash="unused",
             otp_delivery_mode="email",

@@ -394,7 +394,7 @@ def main() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
 
     settings = load_settings(_safe_secrets())
-    repo = AttendanceRepository(settings.database_path)
+    repo = AttendanceRepository(settings.database_target)
     repo.init_schema()
     _init_session_state()
 

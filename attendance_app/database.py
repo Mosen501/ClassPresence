@@ -4,88 +4,192 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+try:  # pragma: no cover - exercised in deployments with Postgres configured
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - sqlite-only local/test environments
+    psycopg = None
+    dict_row = None
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS courses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT NOT NULL UNIQUE,
-    title TEXT NOT NULL,
-    start_date TEXT NOT NULL,
-    end_date TEXT,
-    total_meetings INTEGER NOT NULL CHECK(total_meetings > 0),
-    latitude REAL NOT NULL,
-    longitude REAL NOT NULL,
-    radius_m REAL NOT NULL DEFAULT 3,
-    absence_limit_pct REAL NOT NULL DEFAULT 20,
-    created_at TEXT NOT NULL
-);
 
-CREATE TABLE IF NOT EXISTS students (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    full_name TEXT NOT NULL,
-    university_id TEXT NOT NULL UNIQUE,
-    email TEXT,
-    phone TEXT,
-    created_at TEXT NOT NULL
-);
+Record = dict[str, Any]
 
-CREATE TABLE IF NOT EXISTS course_students (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-    enrolled_at TEXT NOT NULL,
-    UNIQUE(course_id, student_id)
-);
+_SQLITE_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS courses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        total_meetings INTEGER NOT NULL CHECK(total_meetings > 0),
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        radius_m REAL NOT NULL DEFAULT 3,
+        absence_limit_pct REAL NOT NULL DEFAULT 20,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        full_name TEXT NOT NULL,
+        university_id TEXT NOT NULL UNIQUE,
+        email TEXT,
+        phone TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS course_students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        enrolled_at TEXT NOT NULL,
+        UNIQUE(course_id, student_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS course_schedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6),
+        label TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(course_id, weekday, label)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS otp_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        delivery_method TEXT NOT NULL,
+        delivery_target TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        invalidated_at TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        schedule_id INTEGER NOT NULL REFERENCES course_schedules(id) ON DELETE CASCADE,
+        attendance_date TEXT NOT NULL,
+        stamped_at TEXT NOT NULL,
+        student_latitude REAL NOT NULL,
+        student_longitude REAL NOT NULL,
+        accuracy_m REAL,
+        distance_m REAL NOT NULL,
+        device_info TEXT NOT NULL,
+        UNIQUE(course_id, student_id, schedule_id, attendance_date)
+    )
+    """,
+)
 
-CREATE TABLE IF NOT EXISTS course_schedules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6),
-    label TEXT NOT NULL,
-    start_time TEXT NOT NULL,
-    end_time TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(course_id, weekday, label)
-);
-
-CREATE TABLE IF NOT EXISTS otp_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-    code_hash TEXT NOT NULL,
-    delivery_method TEXT NOT NULL,
-    delivery_target TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    used_at TEXT,
-    invalidated_at TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS attendance_records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-    schedule_id INTEGER NOT NULL REFERENCES course_schedules(id) ON DELETE CASCADE,
-    attendance_date TEXT NOT NULL,
-    stamped_at TEXT NOT NULL,
-    student_latitude REAL NOT NULL,
-    student_longitude REAL NOT NULL,
-    accuracy_m REAL,
-    distance_m REAL NOT NULL,
-    device_info TEXT NOT NULL,
-    UNIQUE(course_id, student_id, schedule_id, attendance_date)
-);
-"""
+_POSTGRES_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS courses (
+        id BIGSERIAL PRIMARY KEY,
+        code TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        total_meetings INTEGER NOT NULL CHECK(total_meetings > 0),
+        latitude DOUBLE PRECISION NOT NULL,
+        longitude DOUBLE PRECISION NOT NULL,
+        radius_m DOUBLE PRECISION NOT NULL DEFAULT 3,
+        absence_limit_pct DOUBLE PRECISION NOT NULL DEFAULT 20,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS students (
+        id BIGSERIAL PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        university_id TEXT NOT NULL UNIQUE,
+        email TEXT,
+        phone TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS course_students (
+        id BIGSERIAL PRIMARY KEY,
+        course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id BIGINT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        enrolled_at TEXT NOT NULL,
+        UNIQUE(course_id, student_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS course_schedules (
+        id BIGSERIAL PRIMARY KEY,
+        course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6),
+        label TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(course_id, weekday, label)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS otp_codes (
+        id BIGSERIAL PRIMARY KEY,
+        course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id BIGINT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        delivery_method TEXT NOT NULL,
+        delivery_target TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        invalidated_at TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attendance_records (
+        id BIGSERIAL PRIMARY KEY,
+        course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id BIGINT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        schedule_id BIGINT NOT NULL REFERENCES course_schedules(id) ON DELETE CASCADE,
+        attendance_date TEXT NOT NULL,
+        stamped_at TEXT NOT NULL,
+        student_latitude DOUBLE PRECISION NOT NULL,
+        student_longitude DOUBLE PRECISION NOT NULL,
+        accuracy_m DOUBLE PRECISION,
+        distance_m DOUBLE PRECISION NOT NULL,
+        device_info TEXT NOT NULL,
+        UNIQUE(course_id, student_id, schedule_id, attendance_date)
+    )
+    """,
+)
 
 
 class AttendanceRepository:
-    def __init__(self, db_path: str) -> None:
-        self.db_path = Path(db_path)
+    def __init__(self, database_target: str) -> None:
+        self.database_target = database_target.strip()
+        self.backend = _detect_backend(self.database_target)
+        self.db_path = (
+            Path(_sqlite_path_from_target(self.database_target))
+            if self.backend == "sqlite"
+            else None
+        )
 
     def init_schema(self) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.backend == "sqlite" and self.db_path is not None and str(self.db_path) != ":memory:":
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
         with self._connect() as connection:
-            connection.executescript(SCHEMA)
+            for statement in self._schema_statements():
+                connection.execute(statement)
             self._migrate_schema(connection)
 
     def create_course(
@@ -157,13 +261,13 @@ class AttendanceRepository:
             ),
         )
 
-    def list_courses(self) -> list[sqlite3.Row]:
+    def list_courses(self) -> list[Record]:
         return self._fetchall("SELECT * FROM courses ORDER BY code")
 
-    def get_course(self, course_id: int) -> sqlite3.Row | None:
+    def get_course(self, course_id: int) -> Record | None:
         return self._fetchone("SELECT * FROM courses WHERE id = ?", (course_id,))
 
-    def get_course_by_code(self, code: str) -> sqlite3.Row | None:
+    def get_course_by_code(self, code: str) -> Record | None:
         return self._fetchone("SELECT * FROM courses WHERE code = ?", (code,))
 
     def add_student_to_course(
@@ -177,37 +281,15 @@ class AttendanceRepository:
         created_at: str,
     ) -> None:
         with self._connect() as connection:
-            existing_student = connection.execute(
-                "SELECT id FROM students WHERE university_id = ?",
-                (university_id,),
-            ).fetchone()
-            if existing_student:
-                student_id = int(existing_student["id"])
-                connection.execute(
-                    """
-                    UPDATE students
-                    SET full_name = ?, email = ?, phone = ?
-                    WHERE id = ?
-                    """,
-                    (full_name, email, phone, student_id),
-                )
-            else:
-                cursor = connection.execute(
-                    """
-                    INSERT INTO students (full_name, university_id, email, phone, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (full_name, university_id, email, phone, created_at),
-                )
-                student_id = int(cursor.lastrowid)
-
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO course_students (course_id, student_id, enrolled_at)
-                VALUES (?, ?, ?)
-                """,
-                (course_id, student_id, created_at),
+            student_id = self._upsert_student(
+                connection,
+                full_name=full_name,
+                university_id=university_id,
+                email=email,
+                phone=phone,
+                created_at=created_at,
             )
+            self._insert_course_student(connection, course_id=course_id, student_id=student_id, enrolled_at=created_at)
 
     def sync_course_roster(
         self,
@@ -219,65 +301,44 @@ class AttendanceRepository:
         with self._connect() as connection:
             enrolled_student_ids: list[int] = []
             for row in roster_rows:
-                existing_student = connection.execute(
-                    "SELECT id FROM students WHERE university_id = ?",
-                    (row["university_id"],),
-                ).fetchone()
-                if existing_student:
-                    student_id = int(existing_student["id"])
-                    connection.execute(
-                        """
-                        UPDATE students
-                        SET full_name = ?, email = ?, phone = ?
-                        WHERE id = ?
-                        """,
-                        (row["full_name"], row["email"], row.get("phone", ""), student_id),
-                    )
-                else:
-                    cursor = connection.execute(
-                        """
-                        INSERT INTO students (full_name, university_id, email, phone, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (
-                            row["full_name"],
-                            row["university_id"],
-                            row["email"],
-                            row.get("phone", ""),
-                            created_at,
-                        ),
-                    )
-                    student_id = int(cursor.lastrowid)
-
+                student_id = self._upsert_student(
+                    connection,
+                    full_name=row["full_name"],
+                    university_id=row["university_id"],
+                    email=row["email"],
+                    phone=row.get("phone", ""),
+                    created_at=created_at,
+                )
                 enrolled_student_ids.append(student_id)
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO course_students (course_id, student_id, enrolled_at)
-                    VALUES (?, ?, ?)
-                    """,
-                    (course_id, student_id, created_at),
+                self._insert_course_student(
+                    connection,
+                    course_id=course_id,
+                    student_id=student_id,
+                    enrolled_at=created_at,
                 )
 
             if enrolled_student_ids:
                 placeholders = ", ".join("?" for _ in enrolled_student_ids)
                 connection.execute(
-                    f"""
-                    DELETE FROM course_students
-                    WHERE course_id = ?
-                      AND student_id NOT IN ({placeholders})
-                    """,
+                    self._sql(
+                        f"""
+                        DELETE FROM course_students
+                        WHERE course_id = ?
+                          AND student_id NOT IN ({placeholders})
+                        """
+                    ),
                     (course_id, *enrolled_student_ids),
                 )
             else:
                 connection.execute(
-                    "DELETE FROM course_students WHERE course_id = ?",
+                    self._sql("DELETE FROM course_students WHERE course_id = ?"),
                     (course_id,),
                 )
 
-    def get_student(self, student_id: int) -> sqlite3.Row | None:
+    def get_student(self, student_id: int) -> Record | None:
         return self._fetchone("SELECT * FROM students WHERE id = ?", (student_id,))
 
-    def get_student_for_course(self, course_id: int, university_id: str) -> sqlite3.Row | None:
+    def get_student_for_course(self, course_id: int, university_id: str) -> Record | None:
         return self._fetchone(
             """
             SELECT s.*
@@ -288,7 +349,7 @@ class AttendanceRepository:
             (course_id, university_id),
         )
 
-    def list_students_for_course(self, course_id: int) -> list[sqlite3.Row]:
+    def list_students_for_course(self, course_id: int) -> list[Record]:
         return self._fetchall(
             """
             SELECT s.*
@@ -300,7 +361,7 @@ class AttendanceRepository:
             (course_id,),
         )
 
-    def list_course_contexts_for_student(self, university_id: str) -> list[sqlite3.Row]:
+    def list_course_contexts_for_student(self, university_id: str) -> list[Record]:
         return self._fetchall(
             """
             SELECT
@@ -337,7 +398,7 @@ class AttendanceRepository:
             (course_id, weekday, label, start_time, end_time, created_at),
         )
 
-    def list_schedules_for_course(self, course_id: int) -> list[sqlite3.Row]:
+    def list_schedules_for_course(self, course_id: int) -> list[Record]:
         return self._fetchall(
             """
             SELECT *
@@ -351,10 +412,12 @@ class AttendanceRepository:
     def delete_schedule(self, *, schedule_id: int, course_id: int) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
-                """
-                DELETE FROM course_schedules
-                WHERE id = ? AND course_id = ?
-                """,
+                self._sql(
+                    """
+                    DELETE FROM course_schedules
+                    WHERE id = ? AND course_id = ?
+                    """
+                ),
                 (schedule_id, course_id),
             )
             return cursor.rowcount > 0
@@ -381,12 +444,14 @@ class AttendanceRepository:
                 existing = existing_by_key.get(key)
                 if existing is None:
                     connection.execute(
-                        """
-                        INSERT INTO course_schedules (
-                            course_id, weekday, label, start_time, end_time, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
+                        self._sql(
+                            """
+                            INSERT INTO course_schedules (
+                                course_id, weekday, label, start_time, end_time, created_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """
+                        ),
                         (
                             course_id,
                             int(row["weekday"]),
@@ -403,11 +468,13 @@ class AttendanceRepository:
                     or str(existing["end_time"]) != str(row["end_time"])
                 ):
                     connection.execute(
-                        """
-                        UPDATE course_schedules
-                        SET start_time = ?, end_time = ?
-                        WHERE id = ?
-                        """,
+                        self._sql(
+                            """
+                            UPDATE course_schedules
+                            SET start_time = ?, end_time = ?
+                            WHERE id = ?
+                            """
+                        ),
                         (
                             str(row["start_time"]),
                             str(row["end_time"]),
@@ -419,7 +486,7 @@ class AttendanceRepository:
                 if key in incoming_by_key:
                     continue
                 connection.execute(
-                    "DELETE FROM course_schedules WHERE id = ?",
+                    self._sql("DELETE FROM course_schedules WHERE id = ?"),
                     (int(row["id"]),),
                 )
 
@@ -447,14 +514,17 @@ class AttendanceRepository:
         expires_at: str,
         created_at: str,
     ) -> int:
-        return self._execute(
-            """
+        query = """
             INSERT INTO otp_codes (
                 course_id, student_id, code_hash, delivery_method, delivery_target,
                 expires_at, created_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+        """
+        if self.backend == "postgres":
+            query += " RETURNING id"
+        return self._execute(
+            query,
             (
                 course_id,
                 student_id,
@@ -464,6 +534,7 @@ class AttendanceRepository:
                 expires_at,
                 created_at,
             ),
+            returns_id=True,
         )
 
     def invalidate_otp(self, otp_id: int, invalidated_at: str) -> None:
@@ -478,7 +549,7 @@ class AttendanceRepository:
         course_id: int,
         student_id: int,
         now_iso: str,
-    ) -> sqlite3.Row | None:
+    ) -> Record | None:
         return self._fetchone(
             """
             SELECT *
@@ -565,7 +636,7 @@ class AttendanceRepository:
         )
         return int(row["attendance_count"]) if row else 0
 
-    def list_attendance(self, *, course_id: int, student_id: int, limit: int = 30) -> list[sqlite3.Row]:
+    def list_attendance(self, *, course_id: int, student_id: int, limit: int = 30) -> list[Record]:
         return self._fetchall(
             """
             SELECT
@@ -583,7 +654,7 @@ class AttendanceRepository:
             (course_id, student_id, limit),
         )
 
-    def list_course_attendance(self, *, course_id: int, limit: int = 100) -> list[sqlite3.Row]:
+    def list_course_attendance(self, *, course_id: int, limit: int = 100) -> list[Record]:
         return self._fetchall(
             """
             SELECT
@@ -603,31 +674,168 @@ class AttendanceRepository:
             (course_id, limit),
         )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+    def _connect(self):
+        if self.backend == "sqlite":
+            if self.db_path is None:
+                raise RuntimeError("SQLite database path is not configured.")
+            connection = sqlite3.connect(str(self.db_path))
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
 
-    def _migrate_schema(self, connection: sqlite3.Connection) -> None:
-        course_columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(courses)").fetchall()
-        }
+        if psycopg is None or dict_row is None:
+            raise RuntimeError(
+                "PostgreSQL support requires `psycopg[binary]`. Install dependencies before "
+                "running the app with ATTENDANCE_DB_URL."
+            )
+        return psycopg.connect(self.database_target, row_factory=dict_row)
+
+    def _schema_statements(self) -> tuple[str, ...]:
+        if self.backend == "postgres":
+            return _POSTGRES_SCHEMA_STATEMENTS
+        return _SQLITE_SCHEMA_STATEMENTS
+
+    def _migrate_schema(self, connection) -> None:
+        if self.backend == "postgres":
+            rows = connection.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'courses'
+                  AND table_schema = current_schema()
+                """
+            ).fetchall()
+            course_columns = {str(row["column_name"]) for row in rows}
+            if "end_date" not in course_columns:
+                connection.execute("ALTER TABLE courses ADD COLUMN end_date TEXT")
+                connection.execute("UPDATE courses SET end_date = start_date WHERE end_date IS NULL")
+            return
+
+        rows = connection.execute("PRAGMA table_info(courses)").fetchall()
+        course_columns = {str(row["name"]) for row in rows}
         if "end_date" not in course_columns:
             connection.execute("ALTER TABLE courses ADD COLUMN end_date TEXT")
             connection.execute("UPDATE courses SET end_date = start_date WHERE end_date IS NULL")
 
-
-    def _fetchone(self, query: str, parameters: Iterable[Any] = ()) -> sqlite3.Row | None:
+    def _fetchone(self, query: str, parameters: Iterable[Any] = ()) -> Record | None:
         with self._connect() as connection:
-            return connection.execute(query, tuple(parameters)).fetchone()
+            row = connection.execute(self._sql(query), tuple(parameters)).fetchone()
+        if row is None:
+            return None
+        return dict(row)
 
-    def _fetchall(self, query: str, parameters: Iterable[Any] = ()) -> list[sqlite3.Row]:
+    def _fetchall(self, query: str, parameters: Iterable[Any] = ()) -> list[Record]:
         with self._connect() as connection:
-            return connection.execute(query, tuple(parameters)).fetchall()
+            rows = connection.execute(self._sql(query), tuple(parameters)).fetchall()
+        return [dict(row) for row in rows]
 
-    def _execute(self, query: str, parameters: Iterable[Any] = ()) -> int:
+    def _execute(
+        self,
+        query: str,
+        parameters: Iterable[Any] = (),
+        *,
+        returns_id: bool = False,
+    ) -> int:
         with self._connect() as connection:
-            cursor = connection.execute(query, tuple(parameters))
+            cursor = connection.execute(self._sql(query), tuple(parameters))
+            if not returns_id:
+                return int(getattr(cursor, "lastrowid", 0) or 0)
+
+            if self.backend == "postgres":
+                row = cursor.fetchone()
+                if row is None:
+                    raise RuntimeError("Expected an inserted row ID from PostgreSQL.")
+                return int(row["id"])
+
             return int(cursor.lastrowid)
+
+    def _sql(self, query: str) -> str:
+        if self.backend == "postgres":
+            return query.replace("?", "%s")
+        return query
+
+    def _upsert_student(
+        self,
+        connection,
+        *,
+        full_name: str,
+        university_id: str,
+        email: str,
+        phone: str,
+        created_at: str,
+    ) -> int:
+        existing_student = connection.execute(
+            self._sql("SELECT id FROM students WHERE university_id = ?"),
+            (university_id,),
+        ).fetchone()
+        if existing_student is not None:
+            student_id = int(existing_student["id"])
+            connection.execute(
+                self._sql(
+                    """
+                    UPDATE students
+                    SET full_name = ?, email = ?, phone = ?
+                    WHERE id = ?
+                    """
+                ),
+                (full_name, email, phone, student_id),
+            )
+            return student_id
+
+        insert_query = """
+            INSERT INTO students (full_name, university_id, email, phone, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        if self.backend == "postgres":
+            insert_query += " RETURNING id"
+
+        cursor = connection.execute(
+            self._sql(insert_query),
+            (full_name, university_id, email, phone, created_at),
+        )
+        if self.backend == "postgres":
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("Expected PostgreSQL to return the inserted student ID.")
+            return int(row["id"])
+        return int(cursor.lastrowid)
+
+    def _insert_course_student(
+        self,
+        connection,
+        *,
+        course_id: int,
+        student_id: int,
+        enrolled_at: str,
+    ) -> None:
+        if self.backend == "postgres":
+            connection.execute(
+                """
+                INSERT INTO course_students (course_id, student_id, enrolled_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (course_id, student_id) DO NOTHING
+                """,
+                (course_id, student_id, enrolled_at),
+            )
+            return
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO course_students (course_id, student_id, enrolled_at)
+            VALUES (?, ?, ?)
+            """,
+            (course_id, student_id, enrolled_at),
+        )
+
+
+def _detect_backend(database_target: str) -> str:
+    normalized = database_target.strip().lower()
+    if normalized.startswith(("postgres://", "postgresql://")):
+        return "postgres"
+    return "sqlite"
+
+
+def _sqlite_path_from_target(database_target: str) -> str:
+    if database_target.startswith("sqlite:///"):
+        return database_target.removeprefix("sqlite:///")
+    return database_target

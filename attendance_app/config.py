@@ -13,7 +13,7 @@ TRUE_VALUES = {"1", "true", "yes", "on"}
 class Settings:
     app_env: str
     app_timezone: str
-    database_path: str
+    database_target: str
     manager_username: str
     manager_password_hash: str
     otp_delivery_mode: str
@@ -30,6 +30,10 @@ class Settings:
     def is_development(self) -> bool:
         return self.app_env.strip().lower() == "development"
 
+    @property
+    def database_path(self) -> str:
+        return self.database_target
+
 
 def load_settings(secrets: Mapping[str, Any] | None = None) -> Settings:
     app_env = _get_value("APP_ENV", "development", secrets)
@@ -37,7 +41,7 @@ def load_settings(secrets: Mapping[str, Any] | None = None) -> Settings:
     return Settings(
         app_env=app_env,
         app_timezone=_get_value("APP_TIMEZONE", "Asia/Riyadh", secrets),
-        database_path=_resolve_database_path(_get_value("ATTENDANCE_DB_PATH", "attendance.db", secrets)),
+        database_target=_load_database_target(secrets),
         manager_username=_get_value("MANAGER_USERNAME", "", secrets),
         manager_password_hash=_get_value("MANAGER_PASSWORD_HASH", "", secrets),
         otp_delivery_mode=_get_value("OTP_DELIVERY_MODE", default_otp_delivery_mode, secrets).lower(),
@@ -63,6 +67,15 @@ def _get_value(key: str, default: str, secrets: Mapping[str, Any] | None) -> str
 def _get_bool(key: str, default: bool, secrets: Mapping[str, Any] | None) -> bool:
     raw_value = _get_value(key, str(default).lower(), secrets)
     return raw_value.strip().lower() in TRUE_VALUES
+
+
+def _load_database_target(secrets: Mapping[str, Any] | None) -> str:
+    database_url = _get_value("ATTENDANCE_DB_URL", "", secrets).strip()
+    if not database_url:
+        database_url = _get_value("DATABASE_URL", "", secrets).strip()
+    if database_url:
+        return database_url
+    return _resolve_database_path(_get_value("ATTENDANCE_DB_PATH", "attendance.db", secrets))
 
 
 def _resolve_database_path(raw_path: str) -> str:

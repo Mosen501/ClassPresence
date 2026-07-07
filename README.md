@@ -16,7 +16,7 @@ Students sign in with a one-time password tied to the email address on their cou
 - Geofenced attendance stamping within a configurable radius that defaults to 3 meters
 - Attendance records with timestamp, device information, and location distance checks
 - Student dashboard with attendance totals, absences, and exam-entry status
-- SQLite storage so the app runs locally without extra infrastructure
+- PostgreSQL-ready storage for production deployments, with SQLite kept as a local fallback
 
 ## Why Email OTP By Default
 
@@ -62,8 +62,10 @@ Copy `.env.example` values into your shell environment or deployment platform.
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `APP_ENV` | Application environment | `development` |
-| `APP_TIMEZONE` | Local timezone for schedule evaluation | `America/New_York` |
-| `ATTENDANCE_DB_PATH` | SQLite database file | `attendance.db` |
+| `APP_TIMEZONE` | Local timezone for schedule evaluation | `Asia/Riyadh` |
+| `ATTENDANCE_DB_URL` | PostgreSQL connection string for production | unset |
+| `DATABASE_URL` | Standard PostgreSQL connection string fallback | unset |
+| `ATTENDANCE_DB_PATH` | SQLite database file used only when no PostgreSQL URL is set | `attendance.db` |
 | `MANAGER_USERNAME` | Manager login username | unset |
 | `MANAGER_PASSWORD_HASH` | PBKDF2 password hash for the manager account | unset |
 | `OTP_DELIVERY_MODE` | `console` or `email` | `console` |
@@ -81,7 +83,7 @@ Copy `.env.example` values into your shell environment or deployment platform.
 - Browser geolocation usually requires `localhost` during local development or HTTPS in deployment.
 - The manager location picker uses OpenStreetMap tiles in the browser, so internet access helps the map render during local testing.
 - GPS accuracy can drift indoors. The app enforces the configured radius, but device-reported accuracy should still be reviewed during rollout.
-- The first run creates the SQLite schema automatically.
+- The first run creates the database schema automatically for either SQLite or PostgreSQL.
 - A demo seed button is available inside the manager console to quickly populate `MAT1116`.
 - Roster uploads currently support `.xlsx` and `.csv`.
 - In local development, manager credentials can live in `.streamlit/secrets.toml`. In production, set them in deployment secrets instead of the repository.
@@ -94,9 +96,32 @@ The repository includes unit tests for the schedule, OTP, distance, and roster p
 python3 -m unittest discover -s tests
 ```
 
-## Next Production Steps
+## PostgreSQL Deployment
+
+For Streamlit Community Cloud or any public deployment, use PostgreSQL instead of the default local SQLite file.
+
+1. Create a hosted PostgreSQL database.
+2. Copy its connection string.
+3. Add it to Streamlit secrets as `ATTENDANCE_DB_URL`.
+4. Keep `ATTENDANCE_DB_PATH` unset in production so the app does not fall back to a local file.
+
+Example:
+
+```toml
+ATTENDANCE_DB_URL = "postgresql://attendance_user:strong-password@db-host.example.com:5432/attendance?sslmode=require"
+APP_ENV = "production"
+APP_TIMEZONE = "Asia/Riyadh"
+OTP_DELIVERY_MODE = "email"
+```
+
+With this setup:
+
+- course settings, rosters, OTP records, and attendance data live in PostgreSQL
+- data survives Streamlit app sleep, restart, and redeploy
+- local development can still use `attendance.db` when no PostgreSQL URL is configured
+
+## Production Notes
 
 - Add a real SMTP account or paid SMS provider
 - Put Streamlit behind HTTPS
-- Replace SQLite with PostgreSQL for multi-user deployment
 - Replace single-manager credentials with SSO or an external identity provider
