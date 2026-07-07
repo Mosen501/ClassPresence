@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -36,7 +37,7 @@ def load_settings(secrets: Mapping[str, Any] | None = None) -> Settings:
     return Settings(
         app_env=app_env,
         app_timezone=_get_value("APP_TIMEZONE", "Asia/Riyadh", secrets),
-        database_path=_get_value("ATTENDANCE_DB_PATH", "attendance.db", secrets),
+        database_path=_resolve_database_path(_get_value("ATTENDANCE_DB_PATH", "attendance.db", secrets)),
         manager_username=_get_value("MANAGER_USERNAME", "", secrets),
         manager_password_hash=_get_value("MANAGER_PASSWORD_HASH", "", secrets),
         otp_delivery_mode=_get_value("OTP_DELIVERY_MODE", default_otp_delivery_mode, secrets).lower(),
@@ -62,3 +63,11 @@ def _get_value(key: str, default: str, secrets: Mapping[str, Any] | None) -> str
 def _get_bool(key: str, default: bool, secrets: Mapping[str, Any] | None) -> bool:
     raw_value = _get_value(key, str(default).lower(), secrets)
     return raw_value.strip().lower() in TRUE_VALUES
+
+
+def _resolve_database_path(raw_path: str) -> str:
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+    project_root = Path(__file__).resolve().parent.parent
+    return str((project_root / candidate).resolve())
