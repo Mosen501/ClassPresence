@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -38,13 +38,15 @@ def import_attendance_report_bytes(
     }
     course_code = _normalize(course_details["Course Code"]).upper()
     course_title = _normalize(course_details["Course Name"])
-    start_date = _normalize(course_details["Start Date"])
-    end_date = _normalize(course_details["End Date"])
+    start_date = _normalize_iso_date(course_details["Start Date"])
+    end_date = _normalize_iso_date(course_details["End Date"]) or start_date
     latitude = float(course_details["Latitude"])
     longitude = float(course_details["Longitude"])
     radius_m = float(course_details["Allowed Radius (m)"])
     absence_limit_pct = float(course_details["Absence Limit (%)"])
-    generated_at = _normalize(course_details["Generated At"]) or now_in_app_timezone(settings).isoformat()
+    generated_at = _normalize_timestamp(course_details["Generated At"]) or now_in_app_timezone(
+        settings
+    ).isoformat()
 
     eligibility_sheet = workbook["Eligibility"]
     eligibility_rows = list(eligibility_sheet.iter_rows(min_row=2, values_only=True))
@@ -155,7 +157,7 @@ def import_attendance_report_bytes(
             skipped_attendance += 1
             continue
 
-        attendance_day = date.fromisoformat(_normalize(attendance_date))
+        attendance_day = _coerce_date(attendance_date)
         schedule = schedules_by_key.get((attendance_day.weekday(), _normalize(window_label)))
         if schedule is None:
             skipped_attendance += 1
@@ -175,7 +177,7 @@ def import_attendance_report_bytes(
             student_id=int(student["id"]),
             schedule_id=int(schedule["id"]),
             attendance_date=attendance_day.isoformat(),
-            stamped_at=_normalize(stamped_at),
+            stamped_at=_normalize_timestamp(stamped_at),
             student_latitude=latitude,
             student_longitude=longitude,
             accuracy_m=None,
@@ -198,3 +200,36 @@ def _normalize(value) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _coerce_date(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+
+    text = _normalize(value)
+    if not text:
+        raise ValueError("A required date value is blank in the attendance report.")
+
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        try:
+            return datetime.fromisoformat(text).date()
+        except ValueError as error:
+            raise ValueError(f"Unsupported date value in the attendance report: {text}") from error
+
+
+def _normalize_iso_date(value) -> str:
+    if value is None:
+        return ""
+    return _coerce_date(value).isoformat()
+
+
+def _normalize_timestamp(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return _normalize(value)
