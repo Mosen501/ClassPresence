@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from attendance_app.config import load_settings
+from attendance_app.database import _normalize_postgres_conninfo
 
 
 class ConfigTestCase(unittest.TestCase):
@@ -49,6 +50,24 @@ class ConfigTestCase(unittest.TestCase):
         self.assertEqual(
             settings.database_target,
             "postgresql://attendance_user:secret@db.example.com:5432/attendance",
+        )
+
+    def test_postgres_conninfo_defaults_sslmode_require(self) -> None:
+        normalized = _normalize_postgres_conninfo(
+            "postgresql://attendance_user:secret@db.example.com:5432/attendance"
+        )
+        self.assertEqual(
+            normalized,
+            "postgresql://attendance_user:secret@db.example.com:5432/attendance?sslmode=require",
+        )
+
+    def test_postgres_conninfo_keeps_existing_sslmode(self) -> None:
+        normalized = _normalize_postgres_conninfo(
+            "postgresql://attendance_user:secret@db.example.com:5432/attendance?sslmode=verify-full"
+        )
+        self.assertEqual(
+            normalized,
+            "postgresql://attendance_user:secret@db.example.com:5432/attendance?sslmode=verify-full",
         )
 
 

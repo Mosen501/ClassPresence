@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 try:  # pragma: no cover - exercised in deployments with Postgres configured
     import psycopg
@@ -187,7 +189,7 @@ class AttendanceRepository:
         if self.backend == "sqlite" and self.db_path is not None and str(self.db_path) != ":memory:":
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with self._connect() as connection:
+        with self._connection() as connection:
             for statement in self._schema_statements():
                 connection.execute(statement)
             self._migrate_schema(connection)
@@ -280,7 +282,7 @@ class AttendanceRepository:
         phone: str,
         created_at: str,
     ) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             student_id = self._upsert_student(
                 connection,
                 full_name=full_name,
@@ -298,7 +300,7 @@ class AttendanceRepository:
         roster_rows: list[dict[str, str]],
         created_at: str,
     ) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             enrolled_student_ids: list[int] = []
             for row in roster_rows:
                 student_id = self._upsert_student(
@@ -410,7 +412,7 @@ class AttendanceRepository:
         )
 
     def delete_schedule(self, *, schedule_id: int, course_id: int) -> bool:
-        with self._connect() as connection:
+        with self._connection() as connection:
             cursor = connection.execute(
                 self._sql(
                     """
@@ -439,7 +441,7 @@ class AttendanceRepository:
             for row in schedule_rows
         }
 
-        with self._connect() as connection:
+        with self._connection() as connection:
             for key, row in incoming_by_key.items():
                 existing = existing_by_key.get(key)
                 if existing is None:
@@ -688,7 +690,30 @@ class AttendanceRepository:
                 "PostgreSQL support requires `psycopg[binary]`. Install dependencies before "
                 "running the app with ATTENDANCE_DB_URL."
             )
-        return psycopg.connect(self.database_target, row_factory=dict_row)
+        try:
+            return psycopg.connect(
+                _normalize_postgres_conninfo(self.database_target),
+                row_factory=dict_row,
+            )
+        except psycopg.OperationalError as error:
+            raise RuntimeError(
+                "Could not connect to PostgreSQL. Check `ATTENDANCE_DB_URL` in Streamlit secrets, "
+                "make sure it is a full `postgresql://...` URL, add `sslmode=require`, and "
+                "URL-encode any special characters in the username or password such as `@`, `:`, "
+                "`/`, `?`, or `#`."
+            ) from error
+
+    @contextmanager
+    def _connection(self):
+        connection = self._connect()
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def _schema_statements(self) -> tuple[str, ...]:
         if self.backend == "postgres":
@@ -718,14 +743,14 @@ class AttendanceRepository:
             connection.execute("UPDATE courses SET end_date = start_date WHERE end_date IS NULL")
 
     def _fetchone(self, query: str, parameters: Iterable[Any] = ()) -> Record | None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(self._sql(query), tuple(parameters)).fetchone()
         if row is None:
             return None
         return dict(row)
 
     def _fetchall(self, query: str, parameters: Iterable[Any] = ()) -> list[Record]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(self._sql(query), tuple(parameters)).fetchall()
         return [dict(row) for row in rows]
 
@@ -736,7 +761,7 @@ class AttendanceRepository:
         *,
         returns_id: bool = False,
     ) -> int:
-        with self._connect() as connection:
+        with self._connection() as connection:
             cursor = connection.execute(self._sql(query), tuple(parameters))
             if not returns_id:
                 return int(getattr(cursor, "lastrowid", 0) or 0)
@@ -839,3 +864,14 @@ def _sqlite_path_from_target(database_target: str) -> str:
     if database_target.startswith("sqlite:///"):
         return database_target.removeprefix("sqlite:///")
     return database_target
+
+
+def _normalize_postgres_conninfo(database_target: str) -> str:
+    if not database_target.lower().startswith(("postgres://", "postgresql://")):
+        return database_target
+
+    parsed = urlsplit(database_target)
+    query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query_items.setdefault("sslmode", "require")
+    normalized_query = urlencode(query_items)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, normalized_query, parsed.fragment))
