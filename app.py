@@ -27,49 +27,344 @@ from attendance_app.utils import parse_hhmm, parse_iso_date, weekday_label
 
 APP_CSS = """
 <style>
+    /* ── Global ── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
     .stApp {
-        background:
-            radial-gradient(circle at top left, rgba(15, 118, 110, 0.10), transparent 30%),
-            linear-gradient(180deg, #f7f9f7 0%, #f1f6f2 100%);
+        background: #f0f4f3;
     }
-    .hero {
-        padding: 1.4rem 1.6rem;
-        border-radius: 18px;
-        border: 1px solid rgba(19, 42, 37, 0.08);
-        background: linear-gradient(135deg, rgba(15, 118, 110, 0.10), rgba(255, 255, 255, 0.85));
-        margin-bottom: 1rem;
+
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0d3d35 0%, #0f4f45 100%);
+        border-right: none;
     }
-    .hero h1 {
-        margin: 0;
-        font-size: 2.2rem;
+    [data-testid="stSidebar"] * {
+        color: #e2f0ee !important;
     }
-    .hero p {
-        margin: 0.4rem 0 0 0;
-        color: #27443b;
-        font-size: 1rem;
+    [data-testid="stSidebar"] .stRadio label {
+        color: #b2ccc8 !important;
     }
-    .portal-card {
-        padding: 1rem 1.1rem;
+    [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] ~ div {
+        color: #ffffff !important;
+    }
+    [data-testid="stSidebar"] .stCaption {
+        color: #7aada6 !important;
+    }
+
+    /* ── App header bar ── */
+    header[data-testid="stHeader"] {
+        background: rgba(240, 244, 243, 0.95);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid #d1e4e0;
+    }
+
+    /* ── Hero banner ── */
+    .aa-hero {
+        display: flex;
+        align-items: center;
+        gap: 1.2rem;
+        padding: 1.4rem 1.8rem;
         border-radius: 16px;
-        border: 1px solid rgba(19, 42, 37, 0.08);
-        background: rgba(255, 255, 255, 0.88);
+        background: linear-gradient(135deg, #0d3d35 0%, #0f766e 100%);
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 24px rgba(15, 118, 110, 0.18);
+    }
+    .aa-hero-icon {
+        font-size: 2.4rem;
+        line-height: 1;
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+    }
+    .aa-hero-text h1 {
+        margin: 0;
+        font-size: 1.9rem;
+        font-weight: 700;
+        color: #ffffff;
+        letter-spacing: -0.02em;
+    }
+    .aa-hero-text p {
+        margin: 0.25rem 0 0 0;
+        color: rgba(255,255,255,0.75);
+        font-size: 0.9rem;
+        font-weight: 400;
+    }
+
+    /* ── Section headings ── */
+    .aa-section-header {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.9rem 1.2rem;
+        border-radius: 12px;
+        background: #ffffff;
+        border-left: 4px solid #0f766e;
+        margin-bottom: 1.2rem;
+        box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+    }
+    .aa-section-header .aa-sh-icon {
+        font-size: 1.4rem;
+    }
+    .aa-section-header .aa-sh-body h2 {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #0d3d35;
+    }
+    .aa-section-header .aa-sh-body p {
+        margin: 0.15rem 0 0 0;
+        font-size: 0.82rem;
+        color: #4a7a71;
+    }
+
+    /* ── User pill (signed-in label) ── */
+    .aa-user-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        background: #e6f4f1;
+        border: 1px solid #b0d8d2;
+        border-radius: 999px;
+        padding: 0.3rem 0.85rem;
+        font-size: 0.83rem;
+        font-weight: 600;
+        color: #0d3d35;
+    }
+
+    /* ── Info / step cards ── */
+    .portal-card {
+        padding: 1.1rem 1.3rem;
+        border-radius: 14px;
+        border: 1px solid #d1e4e0;
+        background: #ffffff;
         margin-bottom: 1rem;
+        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
     }
     .portal-card h3 {
         margin: 0 0 0.3rem 0;
-        font-size: 1.08rem;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #0d3d35;
     }
     .portal-card p {
         margin: 0;
-        color: #35564b;
+        color: #4a7a71;
+        font-size: 0.88rem;
+        line-height: 1.55;
     }
     .portal-kicker {
-        margin: 0 0 0.3rem 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin: 0 0 0.5rem 0;
+        background: #e6f4f1;
+        border-radius: 999px;
+        padding: 0.15rem 0.65rem;
         color: #0f766e;
-        font-size: 0.82rem;
-        font-weight: 600;
-        letter-spacing: 0.04em;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.07em;
         text-transform: uppercase;
+    }
+
+    /* ── Step badge cards ── */
+    .aa-step-card {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+        padding: 1.1rem 1.3rem;
+        border-radius: 14px;
+        border: 1px solid #d1e4e0;
+        background: #ffffff;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
+    }
+    .aa-step-badge {
+        flex-shrink: 0;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #0f766e, #0d9488);
+        color: #fff;
+        font-size: 0.85rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 6px rgba(15,118,110,0.25);
+    }
+    .aa-step-body h3 {
+        margin: 0 0 0.2rem 0;
+        font-size: 0.98rem;
+        font-weight: 700;
+        color: #0d3d35;
+    }
+    .aa-step-body p {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #4a7a71;
+        line-height: 1.5;
+    }
+
+    /* ── Sign-in card ── */
+    .aa-signin-card {
+        max-width: 420px;
+        margin: 1rem auto;
+        padding: 2rem 2rem 1.5rem;
+        border-radius: 20px;
+        background: #ffffff;
+        border: 1px solid #d1e4e0;
+        box-shadow: 0 8px 32px rgba(15, 118, 110, 0.10);
+    }
+    .aa-signin-card h2 {
+        margin: 0 0 0.3rem 0;
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #0d3d35;
+    }
+    .aa-signin-card p {
+        margin: 0 0 1.4rem 0;
+        font-size: 0.87rem;
+        color: #4a7a71;
+    }
+
+    /* ── Attendance status banner ── */
+    .aa-window-banner {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.85rem 1.2rem;
+        border-radius: 12px;
+        background: linear-gradient(90deg, #ecfdf5, #d1fae5);
+        border: 1px solid #6ee7b7;
+        margin-bottom: 1rem;
+        font-size: 0.92rem;
+        font-weight: 600;
+        color: #065f46;
+    }
+    .aa-window-banner .aa-wb-icon { font-size: 1.2rem; }
+
+    /* ── Student info card ── */
+    .aa-student-info {
+        padding: 1rem 1.3rem;
+        border-radius: 14px;
+        background: #ffffff;
+        border: 1px solid #d1e4e0;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
+    }
+    .aa-student-info .aa-si-name {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #0d3d35;
+        margin: 0 0 0.2rem 0;
+    }
+    .aa-student-info .aa-si-meta {
+        font-size: 0.84rem;
+        color: #4a7a71;
+        margin: 0;
+    }
+    .aa-student-info code {
+        background: #e6f4f1;
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.82rem;
+        color: #0d3d35;
+    }
+
+    /* ── Divider ── */
+    .aa-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, #d1e4e0, transparent);
+        margin: 1.5rem 0;
+    }
+
+    /* ── Override Streamlit metric ── */
+    [data-testid="metric-container"] {
+        background: #ffffff;
+        border: 1px solid #d1e4e0;
+        border-radius: 12px;
+        padding: 0.8rem 1rem !important;
+        box-shadow: 0 2px 6px rgba(15, 118, 110, 0.06);
+    }
+    [data-testid="metric-container"] [data-testid="stMetricLabel"] {
+        font-size: 0.75rem !important;
+        font-weight: 600 !important;
+        color: #4a7a71 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+        font-size: 1.5rem !important;
+        font-weight: 700 !important;
+        color: #0d3d35 !important;
+    }
+
+    /* ── Override Streamlit tabs ── */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        gap: 0.25rem;
+        background: #e6f4f1;
+        padding: 0.3rem;
+        border-radius: 10px;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab"] {
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.87rem;
+        padding: 0.45rem 1rem;
+    }
+    [data-testid="stTabs"] [aria-selected="true"] {
+        background: #0f766e !important;
+        color: #fff !important;
+    }
+
+    /* ── Override Streamlit buttons ── */
+    .stButton > button {
+        border-radius: 10px;
+        font-weight: 600;
+        font-size: 0.9rem;
+        padding: 0.5rem 1.2rem;
+        transition: all 0.15s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(15, 118, 110, 0.2);
+    }
+
+    /* ── Selectbox and inputs ── */
+    [data-baseweb="select"] {
+        border-radius: 10px !important;
+    }
+    [data-baseweb="input"] {
+        border-radius: 10px !important;
+    }
+
+    /* ── Download button ── */
+    .stDownloadButton > button {
+        border-radius: 10px;
+        font-weight: 600;
+    }
+
+    /* ── Form container ── */
+    [data-testid="stForm"] {
+        background: #ffffff;
+        border: 1px solid #d1e4e0;
+        border-radius: 14px;
+        padding: 1.2rem 1.2rem 0.8rem;
+        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
+    }
+
+    /* ── Roster / report section title ── */
+    .aa-subsection {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #0f766e;
+        margin: 1.2rem 0 0.6rem 0;
     }
 </style>
 """
@@ -105,23 +400,57 @@ def main() -> None:
 
     st.markdown(
         """
-        <section class="hero">
-            <h1>AttendancApp</h1>
-            <p>Professional geofenced course attendance with manager controls, roster-linked
-            student access, email OTP workflows, and Excel reporting.</p>
-        </section>
+        <div class="aa-hero">
+            <div class="aa-hero-icon">🎓</div>
+            <div class="aa-hero-text">
+                <h1>AttendancApp</h1>
+                <p>Geofenced course attendance — manager controls, roster-linked student access,
+                email OTP workflows, and Excel reporting.</p>
+            </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
 
     with st.sidebar:
-        st.title("Workspace")
-        page = st.radio("Open", options=["Manager", "Student"], label_visibility="collapsed")
-        st.caption(f"Timezone: {settings.app_timezone}")
+        st.markdown(
+            """
+            <div style="padding: 0.5rem 0 1.2rem 0;">
+                <div style="font-size:1.3rem; font-weight:800; letter-spacing:-0.02em; color:#ffffff;">
+                    AttendancApp
+                </div>
+                <div style="font-size:0.75rem; color:#7aada6; margin-top:0.2rem;">
+                    Academic Attendance Platform
+                </div>
+            </div>
+            <div style="height:1px; background:rgba(255,255,255,0.1); margin-bottom:1.2rem;"></div>
+            <div style="font-size:0.72rem; font-weight:700; letter-spacing:0.08em;
+                        text-transform:uppercase; color:#7aada6; margin-bottom:0.5rem;">
+                Portal
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        page = st.radio("Open", options=["👨‍🏫  Instructor", "🎒  Student"], label_visibility="collapsed")
+        page = "Manager" if "Instructor" in page else "Student"
+        st.markdown(
+            f"""
+            <div style="height:1px; background:rgba(255,255,255,0.1); margin:1.2rem 0 0.8rem 0;"></div>
+            <div style="font-size:0.75rem; color:#7aada6;">
+                🕐 Timezone<br>
+                <span style="color:#b2ccc8; font-weight:600;">{settings.app_timezone}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         if page == "Student":
-            st.caption(
-                "Students use the roster-linked email on file for one-time code delivery. "
-                "Development mode may still show a preview code."
+            st.markdown(
+                """
+                <div style="margin-top:0.8rem; font-size:0.75rem; color:#7aada6; line-height:1.5;">
+                    📧 Students authenticate via a one-time code sent to their roster email.
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
     if page == "Manager":
@@ -132,20 +461,31 @@ def main() -> None:
 
 
 def render_manager_page(repo: AttendanceRepository, settings) -> None:
-    st.subheader("Manager Console")
-    st.write(
-        "Set up each course from one place: timetable, classroom map location, attendance radius, "
-        "roster upload, and Excel reporting."
+    st.markdown(
+        """
+        <div class="aa-section-header">
+            <div class="aa-sh-icon">🖥️</div>
+            <div class="aa-sh-body">
+                <h2>Instructor Console</h2>
+                <p>Configure courses, set classroom boundaries, manage rosters, and export reports.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+
     notice = st.session_state.pop("manager_notice", None)
     if notice:
         st.success(notice)
 
     top_left, top_right = st.columns([2.6, 1.0])
     with top_left:
-        st.caption(f"Signed in as manager `{settings.manager_username}`")
+        st.markdown(
+            f'<div class="aa-user-pill">👤 {settings.manager_username}</div>',
+            unsafe_allow_html=True,
+        )
     with top_right:
-        if st.button("Manager logout", use_container_width=True):
+        if st.button("Sign out", use_container_width=True):
             st.session_state["manager_auth"] = None
             st.rerun()
 
@@ -178,7 +518,7 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
 
     left, right = st.columns([1.2, 1.0], gap="large")
     with left:
-        st.markdown("### Course setup")
+        st.markdown('<p class="aa-subsection">📋 Course Details</p>', unsafe_allow_html=True)
         with st.form("course_form", clear_on_submit=False):
             code = st.text_input(
                 "Course code",
@@ -241,12 +581,12 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
     with right:
         st.markdown(
             """
-            <section class="portal-card">
-                <p class="portal-kicker">Classroom Location</p>
-                <h3>Choose the classroom point on the map</h3>
-                <p>The selected point becomes the center of the allowed attendance radius. Students
-                must share their live location and stay inside this boundary during class time.</p>
-            </section>
+            <div class="portal-card">
+                <p class="portal-kicker">📍 Classroom Location</p>
+                <h3>Pin the classroom on the map</h3>
+                <p>The selected point becomes the center of the geofenced radius. Students must be
+                physically inside this boundary during an active timetable window to stamp attendance.</p>
+            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -289,18 +629,17 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
                     course_id=int(active_course["id"]),
                 )
 
-    setup_tab, roster_tab, reports_tab = st.tabs(["Course Setup", "Roster", "Reports"])
+    setup_tab, roster_tab, reports_tab = st.tabs(["📅  Timetable", "👥  Roster", "📊  Reports"])
 
     with setup_tab:
-        st.markdown("### Course timetable")
+        st.markdown('<p class="aa-subsection">🗓️ Weekly Timetable</p>', unsafe_allow_html=True)
         schedules = repo.list_schedules_for_course(int(active_course["id"]))
         st.caption(
-            "Use the weekly grid below. The standard lecture rows are preloaded, Sunday to "
-            "Thursday are the active teaching days, and you can add or remove rows directly."
+            "Standard lecture slots are preloaded (Sun–Thu). Tick the day boxes to activate a slot. "
+            "Rows with no day selected are ignored on save."
         )
         st.caption(
-            "Rows without any selected day are ignored when you save. Removing a saved row can "
-            "also remove attendance linked to that timetable window."
+            "⚠️ Removing a saved row may delete linked attendance records for that window."
         )
         timetable_rows = _build_timetable_editor_rows(schedules)
         edited_timetable_rows = st.data_editor(
@@ -351,11 +690,10 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
             )
 
     with roster_tab:
-        st.markdown("### Import course roster")
+        st.markdown('<p class="aa-subsection">📤 Import Roster</p>', unsafe_allow_html=True)
         st.caption(
-            "Roster upload is the only way to manage course students. Upload a `.xlsx` or `.csv` "
-            "file with `student id`, `student name`, and `email`. The uploaded file becomes the "
-            "authoritative roster for this course."
+            "Upload a `.xlsx` or `.csv` file with columns: `student id`, `student name`, `email`. "
+            "The uploaded file replaces the entire roster for this course."
         )
         _render_roster_importer(repo, settings, active_course)
 
@@ -381,10 +719,17 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
 
 
 def render_student_page(repo: AttendanceRepository, settings) -> None:
-    st.subheader("Student Portal")
-    st.write(
-        "Student access is available only during the active class timetable in Riyadh time and "
-        "only from inside the classroom radius defined by the manager."
+    st.markdown(
+        """
+        <div class="aa-section-header">
+            <div class="aa-sh-icon">🎒</div>
+            <div class="aa-sh-body">
+                <h2>Student Portal</h2>
+                <p>Access is only available during your active class window and from inside the classroom boundary.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
     _render_otp_delivery_notice(settings)
 
@@ -415,29 +760,43 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
     top_left, top_right = st.columns([2.5, 1.0])
     with top_left:
         st.markdown(
-            f"**{student['full_name']}**  \n"
-            f"Student ID: `{student['university_id']}`  \n"
-            f"Course: {course['title']}"
+            f"""
+            <div class="aa-student-info">
+                <p class="aa-si-name">👋 {student['full_name']}</p>
+                <p class="aa-si-meta">
+                    Student ID: <code>{student['university_id']}</code> &nbsp;·&nbsp;
+                    {course['title']}
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
     with top_right:
-        if st.button("Log out", use_container_width=True):
+        st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
+        if st.button("Sign out", use_container_width=True):
             st.session_state["student_auth"] = None
             _reset_student_access_flow(clear_student_id=False)
             st.rerun()
 
-    st.success(
-        f"Attendance window open now: {active_schedule['label']} "
-        f"({active_schedule['start_time']} - {active_schedule['end_time']})."
+    st.markdown(
+        f"""
+        <div class="aa-window-banner">
+            <span class="aa-wb-icon">🟢</span>
+            Attendance window open — <strong>{active_schedule['label']}</strong>
+            &nbsp;({active_schedule['start_time']} – {active_schedule['end_time']})
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     st.markdown(
         """
-        <section class="portal-card">
-            <p class="portal-kicker">Attendance Stamp</p>
+        <div class="portal-card">
+            <p class="portal-kicker">📍 Attendance Stamp</p>
             <h3>Share your current classroom location</h3>
-            <p>A fresh location check is required each time you stamp attendance so the record
-            matches your live position inside class.</p>
-        </section>
+            <p>A fresh location check is required each time you stamp attendance, ensuring your
+            live position is inside the classroom boundary.</p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -498,7 +857,8 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
         course_id=int(course["id"]),
         student_id=int(student["id"]),
     )
-    st.markdown("### Recent attendance")
+    st.markdown('<div class="aa-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<p class="aa-subsection">📋 Recent Attendance</p>', unsafe_allow_html=True)
     if recent_records:
         st.dataframe(
             [
@@ -532,12 +892,14 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
 
     st.markdown(
         """
-        <section class="portal-card">
-            <p class="portal-kicker">Step 1</p>
-            <h3>Verify your live class access</h3>
-            <p>Enter your student ID, then share your current location. Access opens only if your
-            roster record is found, your class is active now, and you are inside the classroom radius.</p>
-        </section>
+        <div class="aa-step-card">
+            <div class="aa-step-badge">1</div>
+            <div class="aa-step-body">
+                <h3>Verify your classroom access</h3>
+                <p>Enter your student ID and share your current location. Access is granted only if
+                your roster record is found, your class is active right now, and you are inside the classroom boundary.</p>
+            </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -580,11 +942,13 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
     if not st.session_state.get("student_otp_requested", False):
         st.markdown(
             """
-            <section class="portal-card">
-                <p class="portal-kicker">Step 2</p>
-                <h3>Request your one-time code</h3>
-                <p>The code is sent to the email address already stored in the official course roster.</p>
-            </section>
+            <div class="aa-step-card">
+                <div class="aa-step-badge">2</div>
+                <div class="aa-step-body">
+                    <h3>Request your one-time code</h3>
+                    <p>A secure code will be sent to the email address stored in your official course roster.</p>
+                </div>
+            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -609,11 +973,13 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
 
     st.markdown(
         """
-        <section class="portal-card">
-            <p class="portal-kicker">Step 3</p>
-            <h3>Enter the one-time code</h3>
-            <p>Use the latest code sent to your roster email address. Every login requires a new code.</p>
-        </section>
+        <div class="aa-step-card">
+            <div class="aa-step-badge">3</div>
+            <div class="aa-step-body">
+                <h3>Enter your one-time code</h3>
+                <p>Use the latest code sent to your roster email. Each login requires a fresh code.</p>
+            </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -885,19 +1251,27 @@ def _render_manager_auth(settings) -> bool:
     if st.session_state.get("manager_auth") is not None:
         return True
 
-    st.subheader("Manager Sign In")
-    st.write("Only the authorized academic manager can configure courses and export reports.")
+    st.markdown(
+        """
+        <div class="aa-signin-card">
+            <h2>🔐 Instructor Sign In</h2>
+            <p>Only the authorized academic instructor can configure courses and export reports.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     if not settings.manager_username or not settings.manager_password_hash:
         st.error(
-            "Manager credentials are not configured. Set `MANAGER_USERNAME` and "
-            "`MANAGER_PASSWORD_HASH` in Streamlit secrets before using the manager portal."
+            "Instructor credentials are not configured. Set `MANAGER_USERNAME` and "
+            "`MANAGER_PASSWORD_HASH` in Streamlit secrets before using the instructor portal."
         )
         return False
 
     with st.form("manager_login_form"):
-        username = st.text_input("Manager username")
-        password = st.text_input("Manager password", type="password")
-        submit = st.form_submit_button("Sign in", use_container_width=True)
+        username = st.text_input("Username", placeholder="Enter your username")
+        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        submit = st.form_submit_button("Sign in →", use_container_width=True)
     if submit:
         if (
             username.strip() == settings.manager_username
@@ -905,7 +1279,7 @@ def _render_manager_auth(settings) -> bool:
         ):
             st.session_state["manager_auth"] = {"username": settings.manager_username}
             st.rerun()
-        st.error("Invalid manager username or password.")
+        st.error("Incorrect username or password. Please try again.")
     return False
 
 
