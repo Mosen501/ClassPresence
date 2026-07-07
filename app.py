@@ -622,6 +622,7 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
 
     if active_course is None:
         st.info("Save a course first to configure timetable, sync the roster, and export reports.")
+        _render_report_restore_uploader(repo, settings, key_suffix="bootstrap")
         return
 
     _render_course_summary(repo, active_course)
@@ -1221,39 +1222,7 @@ def _render_roster_importer(repo: AttendanceRepository, settings, course) -> Non
 
 
 def _render_report_downloads(repo: AttendanceRepository, settings, course) -> None:
-    st.markdown('<p class="aa-subsection">📥 Restore From Report</p>', unsafe_allow_html=True)
-    st.caption(
-        "Upload a previously exported attendance report workbook to restore a course, roster, "
-        "timetable, and attendance history into the current database."
-    )
-    restore_file = st.file_uploader(
-        "Attendance report workbook",
-        type=["xlsx"],
-        key=f"restore_report_{course['id']}",
-        label_visibility="collapsed",
-    )
-    if restore_file is not None and st.button(
-        "Restore course from report",
-        key=f"restore_report_button_{course['id']}",
-        use_container_width=True,
-    ):
-        try:
-            summary = import_attendance_report_bytes(
-                repo=repo,
-                settings=settings,
-                source_name=restore_file.name,
-                content=restore_file.getvalue(),
-            )
-            st.session_state["manager_course_selector"] = str(summary["course_code"])
-            st.session_state["manager_notice"] = (
-                f"Restored {summary['course_code']} with {summary['roster_rows']} roster rows, "
-                f"{summary['schedule_rows']} timetable rows, and {summary['imported_attendance']} "
-                "attendance records."
-            )
-            st.rerun()
-        except Exception as error:  # pragma: no cover - Streamlit surface
-            st.error(str(error))
-
+    _render_report_restore_uploader(repo, settings, key_suffix=str(course["id"]))
     st.markdown('<p class="aa-subsection">📊 Export Current Report</p>', unsafe_allow_html=True)
     students = repo.list_students_for_course(int(course["id"]))
     schedules = repo.list_schedules_for_course(int(course["id"]))
@@ -1290,6 +1259,44 @@ def _render_report_downloads(repo: AttendanceRepository, settings, course) -> No
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
+
+
+def _render_report_restore_uploader(repo: AttendanceRepository, settings, *, key_suffix: str) -> None:
+    st.markdown('<p class="aa-subsection">📥 Restore From Report</p>', unsafe_allow_html=True)
+    st.caption(
+        "Upload a previously exported attendance report workbook to restore a course, roster, "
+        "timetable, and attendance history into the current database."
+    )
+    restore_file = st.file_uploader(
+        "Attendance report workbook",
+        type=["xlsx"],
+        key=f"restore_report_{key_suffix}",
+        label_visibility="collapsed",
+    )
+    if restore_file is None:
+        return
+
+    if st.button(
+        "Restore course from report",
+        key=f"restore_report_button_{key_suffix}",
+        use_container_width=True,
+    ):
+        try:
+            summary = import_attendance_report_bytes(
+                repo=repo,
+                settings=settings,
+                source_name=restore_file.name,
+                content=restore_file.getvalue(),
+            )
+            st.session_state["manager_course_selector"] = str(summary["course_code"])
+            st.session_state["manager_notice"] = (
+                f"Restored {summary['course_code']} with {summary['roster_rows']} roster rows, "
+                f"{summary['schedule_rows']} timetable rows, and {summary['imported_attendance']} "
+                "attendance records."
+            )
+            st.rerun()
+        except Exception as error:  # pragma: no cover - Streamlit surface
+            st.error(str(error))
 
 
 def _render_manager_auth(settings) -> bool:
