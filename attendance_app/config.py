@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import quote
 
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -75,6 +76,9 @@ def _load_database_target(secrets: Mapping[str, Any] | None) -> str:
         database_url = _get_value("DATABASE_URL", "", secrets).strip()
     if database_url:
         return database_url
+    database_url = _build_database_url_from_parts(secrets)
+    if database_url:
+        return database_url
     return _resolve_database_path(_get_value("ATTENDANCE_DB_PATH", "attendance.db", secrets))
 
 
@@ -84,3 +88,53 @@ def _resolve_database_path(raw_path: str) -> str:
         return str(candidate)
     project_root = Path(__file__).resolve().parent.parent
     return str((project_root / candidate).resolve())
+
+
+def _build_database_url_from_parts(secrets: Mapping[str, Any] | None) -> str:
+    host = _first_non_empty(
+        _get_value("ATTENDANCE_DB_HOST", "", secrets),
+        _get_value("PGHOST", "", secrets),
+    )
+    database = _first_non_empty(
+        _get_value("ATTENDANCE_DB_NAME", "", secrets),
+        _get_value("PGDATABASE", "", secrets),
+    )
+    user = _first_non_empty(
+        _get_value("ATTENDANCE_DB_USER", "", secrets),
+        _get_value("PGUSER", "", secrets),
+    )
+    password = _first_non_empty(
+        _get_value("ATTENDANCE_DB_PASSWORD", "", secrets),
+        _get_value("PGPASSWORD", "", secrets),
+    )
+    port = _first_non_empty(
+        _get_value("ATTENDANCE_DB_PORT", "", secrets),
+        _get_value("PGPORT", "", secrets),
+        "5432",
+    )
+    sslmode = _first_non_empty(
+        _get_value("ATTENDANCE_DB_SSLMODE", "", secrets),
+        _get_value("PGSSLMODE", "", secrets),
+        "require",
+    )
+
+    if not host or not database or not user:
+        return ""
+
+    encoded_user = quote(user, safe="")
+    encoded_password = quote(password, safe="")
+    encoded_database = quote(database, safe="")
+    auth = encoded_user
+    if password:
+        auth = f"{auth}:{encoded_password}"
+    return (
+        f"postgresql://{auth}@{host}:{port}/{encoded_database}"
+        f"?sslmode={quote(sslmode, safe='')}"
+    )
+
+
+def _first_non_empty(*values: str) -> str:
+    for value in values:
+        if value and value.strip():
+            return value.strip()
+    return ""

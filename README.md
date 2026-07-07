@@ -65,6 +65,12 @@ Copy `.env.example` values into your shell environment or deployment platform.
 | `APP_TIMEZONE` | Local timezone for schedule evaluation | `Asia/Riyadh` |
 | `ATTENDANCE_DB_URL` | PostgreSQL connection string for production | unset |
 | `DATABASE_URL` | Standard PostgreSQL connection string fallback | unset |
+| `ATTENDANCE_DB_HOST` | PostgreSQL host alternative to a full URL | unset |
+| `ATTENDANCE_DB_PORT` | PostgreSQL port alternative to a full URL | `5432` |
+| `ATTENDANCE_DB_NAME` | PostgreSQL database name alternative to a full URL | unset |
+| `ATTENDANCE_DB_USER` | PostgreSQL username alternative to a full URL | unset |
+| `ATTENDANCE_DB_PASSWORD` | PostgreSQL password alternative to a full URL | unset |
+| `ATTENDANCE_DB_SSLMODE` | PostgreSQL SSL mode alternative to a full URL | `require` |
 | `ATTENDANCE_DB_PATH` | SQLite database file used only when no PostgreSQL URL is set | `attendance.db` |
 | `MANAGER_USERNAME` | Manager login username | unset |
 | `MANAGER_PASSWORD_HASH` | PBKDF2 password hash for the manager account | unset |
@@ -102,13 +108,27 @@ For Streamlit Community Cloud or any public deployment, use PostgreSQL instead o
 
 1. Create a hosted PostgreSQL database.
 2. Copy its connection string.
-3. Add it to Streamlit secrets as `ATTENDANCE_DB_URL`.
+3. Add it to Streamlit secrets as `ATTENDANCE_DB_URL`, or provide the individual PostgreSQL fields instead.
 4. Keep `ATTENDANCE_DB_PATH` unset in production so the app does not fall back to a local file.
 
 Example:
 
 ```toml
 ATTENDANCE_DB_URL = "postgresql://attendance_user:strong-password@db-host.example.com:5432/attendance?sslmode=require"
+APP_ENV = "production"
+APP_TIMEZONE = "Asia/Riyadh"
+OTP_DELIVERY_MODE = "email"
+```
+
+If your password contains special URL characters, it is often easier to use separate secrets instead of a single URL:
+
+```toml
+ATTENDANCE_DB_HOST = "db-host.example.com"
+ATTENDANCE_DB_PORT = "5432"
+ATTENDANCE_DB_NAME = "attendance"
+ATTENDANCE_DB_USER = "attendance_user"
+ATTENDANCE_DB_PASSWORD = "your real raw password here"
+ATTENDANCE_DB_SSLMODE = "require"
 APP_ENV = "production"
 APP_TIMEZONE = "Asia/Riyadh"
 OTP_DELIVERY_MODE = "email"

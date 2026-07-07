@@ -400,9 +400,10 @@ def main() -> None:
     except RuntimeError as error:
         st.error(str(error))
         st.info(
-            "For Streamlit Cloud, verify `ATTENDANCE_DB_URL` in Secrets. It must be a full "
-            "`postgresql://...` URL, and passwords containing `@`, `:`, `/`, `?`, or `#` must be "
-            "URL-encoded."
+            "For Streamlit Cloud, either provide `ATTENDANCE_DB_URL` as a full "
+            "`postgresql://...` URL, or set separate secrets such as `ATTENDANCE_DB_HOST`, "
+            "`ATTENDANCE_DB_PORT`, `ATTENDANCE_DB_NAME`, `ATTENDANCE_DB_USER`, and "
+            "`ATTENDANCE_DB_PASSWORD`."
         )
         st.stop()
     _init_session_state()

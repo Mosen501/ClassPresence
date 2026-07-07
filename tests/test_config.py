@@ -52,6 +52,38 @@ class ConfigTestCase(unittest.TestCase):
             "postgresql://attendance_user:secret@db.example.com:5432/attendance",
         )
 
+    def test_database_url_can_be_built_from_separate_attendance_db_parts(self) -> None:
+        settings = load_settings(
+            {
+                "ATTENDANCE_DB_HOST": "db.example.com",
+                "ATTENDANCE_DB_PORT": "5432",
+                "ATTENDANCE_DB_NAME": "attendance",
+                "ATTENDANCE_DB_USER": "attendance_user",
+                "ATTENDANCE_DB_PASSWORD": "S3cr@t:/?#",
+                "ATTENDANCE_DB_SSLMODE": "require",
+            }
+        )
+        self.assertEqual(
+            settings.database_target,
+            "postgresql://attendance_user:S3cr%40t%3A%2F%3F%23@db.example.com:5432/attendance?sslmode=require",
+        )
+
+    def test_database_url_can_be_built_from_standard_pg_parts(self) -> None:
+        settings = load_settings(
+            {
+                "PGHOST": "db.example.com",
+                "PGPORT": "5432",
+                "PGDATABASE": "attendance",
+                "PGUSER": "attendance_user",
+                "PGPASSWORD": "secret",
+                "PGSSLMODE": "require",
+            }
+        )
+        self.assertEqual(
+            settings.database_target,
+            "postgresql://attendance_user:secret@db.example.com:5432/attendance?sslmode=require",
+        )
+
     def test_postgres_conninfo_defaults_sslmode_require(self) -> None:
         normalized = _normalize_postgres_conninfo(
             "postgresql://attendance_user:secret@db.example.com:5432/attendance"
