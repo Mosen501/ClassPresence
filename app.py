@@ -395,7 +395,16 @@ def main() -> None:
 
     settings = load_settings(_safe_secrets())
     repo = AttendanceRepository(settings.database_target)
-    repo.init_schema()
+    try:
+        repo.init_schema()
+    except RuntimeError as error:
+        st.error(str(error))
+        st.info(
+            "For Streamlit Cloud, verify `ATTENDANCE_DB_URL` in Secrets. It must be a full "
+            "`postgresql://...` URL, and passwords containing `@`, `:`, `/`, `?`, or `#` must be "
+            "URL-encoded."
+        )
+        st.stop()
     _init_session_state()
 
     st.markdown(
