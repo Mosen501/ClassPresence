@@ -484,13 +484,13 @@ def main() -> None:
     _init_session_state()
 
     st.markdown(
-        """
+        f"""
         <div class="aa-hero">
             <div class="aa-hero-icon">🎓</div>
             <div class="aa-hero-text">
                 <h1>AttendancApp</h1>
                 <p>Geofenced course attendance — manager controls, roster-linked student access,
-                email OTP workflows, and Excel reporting.</p>
+                {_otp_workflow_label(settings)}, and Excel reporting.</p>
             </div>
         </div>
         """,
@@ -530,9 +530,9 @@ def main() -> None:
         )
         if page == "Student":
             st.markdown(
-                """
+                f"""
                 <div style="margin-top:0.8rem; font-size:0.75rem; color:#7aada6; line-height:1.5;">
-                    📧 Students authenticate via a one-time code sent to their roster email.
+                    {_student_sidebar_otp_text(settings)}
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -726,14 +726,14 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
         st.markdown('<p class="aa-subsection">🗓️ Weekly Timetable</p>', unsafe_allow_html=True)
         schedules = _cached_list_schedules_for_course(settings.database_target, int(active_course["id"]))
         st.caption(
-            "Standard lecture slots are preloaded (Sun–Thu). Tick the day boxes to activate a slot. "
-            "Rows with no day selected are ignored on save."
+            "Standard lecture slots are available as templates. Tick the day boxes to activate a "
+            "slot. Rows with no day selected are ignored on save."
         )
         st.caption(
             "Tick `Remove` and save to remove a row. Removing a saved row may delete linked "
             "attendance records for that window."
         )
-        timetable_rows = _build_timetable_editor_rows(schedules)
+        timetable_rows = _build_timetable_editor_rows(schedules, course_id=int(active_course["id"]))
         edited_timetable_rows = st.data_editor(
             timetable_rows,
             key=f"timetable_editor_{active_course['id']}",
@@ -786,6 +786,10 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
                 course_id=int(active_course["id"]),
                 edited_rows=edited_timetable_rows,
             )
+        if st.button("Restore default timetable rows", use_container_width=True):
+            _clear_hidden_default_timetable_rows(int(active_course["id"]))
+            st.session_state["manager_notice"] = "Default timetable rows are visible again."
+            st.rerun()
 
     with roster_tab:
         st.markdown('<p class="aa-subsection">📤 Import Roster</p>', unsafe_allow_html=True)
@@ -1336,6 +1340,7 @@ def _render_roster_importer(repo: AttendanceRepository, settings, course) -> Non
 
 def _render_report_downloads(repo: AttendanceRepository, settings, course) -> None:
     _render_report_restore_uploader(repo, settings, key_suffix=str(course["id"]))
+    _render_diagnostics_panel(repo, settings, course)
     st.markdown('<p class="aa-subsection">📊 Export Current Report</p>', unsafe_allow_html=True)
     students = _cached_list_students_for_course(settings.database_target, int(course["id"]))
     schedules = _cached_list_schedules_for_course(settings.database_target, int(course["id"]))
@@ -1388,6 +1393,60 @@ def _render_report_downloads(repo: AttendanceRepository, settings, course) -> No
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
+
+
+def _render_diagnostics_panel(repo: AttendanceRepository, settings, course) -> None:
+    st.markdown('<p class="aa-subsection">🩺 App Diagnostics</p>', unsafe_allow_html=True)
+    with st.expander("View safe health checks", expanded=False):
+        course_id = int(course["id"])
+        students = _cached_list_students_for_course(settings.database_target, course_id)
+        schedules = _cached_list_schedules_for_course(settings.database_target, course_id)
+        attendance_rows = _cached_list_course_attendance(settings.database_target, course_id, 10000)
+        all_courses = _cached_list_courses(settings.database_target)
+
+        health_rows = [
+            {"Check": "Database backend", "Status": repo.backend.upper(), "Details": _database_backend_label(repo)},
+            {"Check": "App environment", "Status": settings.app_env, "Details": "Runtime mode"},
+            {"Check": "Timezone", "Status": settings.app_timezone, "Details": "Used for schedules and stamps"},
+            {"Check": "OTP mode", "Status": settings.otp_delivery_mode, "Details": _otp_diagnostics_detail(settings)},
+            {"Check": "Manager credentials", "Status": "Configured" if settings.manager_username and settings.manager_password_hash else "Missing", "Details": "Username/password hash only"},
+            {"Check": "Courses", "Status": str(len(all_courses)), "Details": "Configured course records"},
+            {"Check": "Selected roster", "Status": str(len(students)), "Details": f"{course['code']} enrolled students"},
+            {"Check": "Selected timetable", "Status": str(len(schedules)), "Details": f"{course['code']} active windows"},
+            {"Check": "Selected attendance", "Status": str(len(attendance_rows)), "Details": "Report export rows currently loaded"},
+            {"Check": "Last health check", "Status": now_in_app_timezone(settings).strftime("%Y-%m-%d %H:%M:%S"), "Details": "Riyadh app time"},
+        ]
+        st.dataframe(health_rows, use_container_width=True, hide_index=True)
+
+        if st.button("Run database health check", use_container_width=True):
+            try:
+                repo.list_courses()
+                repo.list_schedules_for_course(course_id)
+                repo.list_students_for_course(course_id)
+                st.success("Database health check passed.")
+            except Exception as error:  # pragma: no cover - Streamlit surface
+                st.error(_safe_health_error(error))
+
+
+def _database_backend_label(repo: AttendanceRepository) -> str:
+    if repo.backend == "postgres":
+        return "Persistent hosted database"
+    return "Local SQLite file"
+
+
+def _otp_diagnostics_detail(settings) -> str:
+    if settings.otp_delivery_mode == "email":
+        return "SMTP configured" if settings.smtp_host and settings.smtp_sender else "SMTP incomplete"
+    if settings.otp_delivery_mode == "console":
+        return "Codes are shown in the app"
+    return "Unsupported mode"
+
+
+def _safe_health_error(error: Exception) -> str:
+    message = str(error).strip()
+    if not message:
+        return "Health check failed. See Streamlit logs for details."
+    return message[:500]
 
 
 def _render_report_restore_uploader(repo: AttendanceRepository, settings, *, key_suffix: str) -> None:
@@ -1480,12 +1539,27 @@ def _otp_entry_help_text(settings) -> str:
     return "Use the latest code sent to your roster email. Each login requires a fresh code."
 
 
-def _build_timetable_editor_rows(schedules) -> list[dict[str, object]]:
+def _otp_workflow_label(settings) -> str:
+    if settings.otp_delivery_mode == "email":
+        return "email OTP workflows"
+    return "one-time code workflows"
+
+
+def _student_sidebar_otp_text(settings) -> str:
+    if settings.otp_delivery_mode == "email":
+        return "Students authenticate via a one-time code sent to their roster email."
+    return "Students authenticate via a one-time code shown inside the app."
+
+
+def _build_timetable_editor_rows(schedules, *, course_id: int) -> list[dict[str, object]]:
     rows_by_label: dict[str, dict[str, object]] = {}
     ordered_labels: list[str] = []
+    hidden_default_labels = _hidden_default_timetable_rows(course_id)
 
     for default_row in DEFAULT_TIMETABLE_ROWS:
         label = str(default_row["label"])
+        if label in hidden_default_labels:
+            continue
         row = {
             "label": label,
             "start_time": str(default_row["start_time"]),
@@ -1530,12 +1604,16 @@ def _save_timetable(
 ) -> None:
     schedule_rows: list[dict[str, str | int]] = []
     used_labels: set[str] = set()
+    hidden_default_labels = set(_hidden_default_timetable_rows(course_id))
+    default_labels = {str(row["label"]) for row in DEFAULT_TIMETABLE_ROWS}
 
     for row in _coerce_timetable_editor_rows(edited_rows):
         label = str(row.get("label", "") or "").strip()
         start_time = str(row.get("start_time", "") or "").strip()
         end_time = str(row.get("end_time", "") or "").strip()
         if bool(row.get("remove", False)):
+            if label in default_labels:
+                hidden_default_labels.add(label)
             continue
         selected_days = [
             (day_name, weekday)
@@ -1585,6 +1663,7 @@ def _save_timetable(
             schedule_rows=schedule_rows,
             created_at=now_in_app_timezone(settings).isoformat(),
         )
+        _set_hidden_default_timetable_rows(course_id, hidden_default_labels)
         _clear_cached_database_reads()
         st.session_state["manager_notice"] = "Course timetable saved successfully."
         st.rerun()
@@ -1597,6 +1676,22 @@ def _weekday_to_editor_day_name(weekday: int) -> str | None:
         if mapped_weekday == weekday:
             return day_name
     return None
+
+
+def _hidden_default_timetable_rows(course_id: int) -> set[str]:
+    return set(st.session_state.get(_hidden_timetable_key(course_id), set()))
+
+
+def _set_hidden_default_timetable_rows(course_id: int, labels: set[str]) -> None:
+    st.session_state[_hidden_timetable_key(course_id)] = sorted(labels)
+
+
+def _clear_hidden_default_timetable_rows(course_id: int) -> None:
+    st.session_state[_hidden_timetable_key(course_id)] = []
+
+
+def _hidden_timetable_key(course_id: int) -> str:
+    return f"hidden_default_timetable_rows_{course_id}"
 
 
 def _coerce_timetable_editor_rows(edited_rows) -> list[dict[str, object]]:
