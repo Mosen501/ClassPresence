@@ -210,6 +210,107 @@ APP_CSS = """
         line-height: 1.5;
     }
 
+    /* ── Student portal hero ── */
+    .aa-student-hero-card {
+        position: relative;
+        overflow: hidden;
+        padding: 1.45rem 1.5rem;
+        border-radius: 22px;
+        background: linear-gradient(135deg, #0b3a33 0%, #116b61 58%, #18a089 100%);
+        margin-bottom: 1rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 20px 44px rgba(11, 58, 51, 0.2);
+    }
+    .aa-student-hero-card::after {
+        content: "";
+        position: absolute;
+        width: 260px;
+        height: 260px;
+        right: -90px;
+        bottom: -120px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 70%);
+    }
+    .aa-student-hero-card > * {
+        position: relative;
+        z-index: 1;
+    }
+    .aa-student-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin: 0 0 0.8rem 0;
+        padding: 0.22rem 0.72rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.14);
+        color: #f6fffd;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+    .aa-student-hero-card h2 {
+        margin: 0;
+        color: #ffffff;
+        font-size: 1.75rem;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+    }
+    .aa-student-hero-card p {
+        margin: 0.45rem 0 0 0;
+        max-width: 42rem;
+        color: rgba(245, 255, 252, 0.86);
+        font-size: 0.92rem;
+        line-height: 1.6;
+    }
+    .aa-student-badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-top: 1rem;
+    }
+    .aa-student-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.36rem 0.78rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+        font-size: 0.79rem;
+        font-weight: 600;
+    }
+    .aa-student-facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+        gap: 0.75rem;
+        margin-top: 1rem;
+    }
+    .aa-student-fact {
+        padding: 0.85rem 0.95rem;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        backdrop-filter: blur(6px);
+    }
+    .aa-student-fact .aa-sf-label {
+        display: block;
+        color: rgba(237, 252, 248, 0.72);
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+    }
+    .aa-student-fact .aa-sf-value {
+        display: block;
+        color: #ffffff;
+        font-size: 0.94rem;
+        font-weight: 700;
+        line-height: 1.35;
+    }
+
     /* ── Sign-in card ── */
     .aa-signin-card {
         max-width: 420px;
@@ -274,6 +375,217 @@ APP_CSS = """
         border-radius: 4px;
         font-size: 0.82rem;
         color: #0d3d35;
+    }
+
+    /* ── Supporting student cards ── */
+    .aa-info-card {
+        padding: 1.15rem 1.25rem;
+        border-radius: 16px;
+        border: 1px solid #d1e4e0;
+        background: #ffffff;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 10px rgba(15, 118, 110, 0.07);
+    }
+    .aa-info-card h3 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #0d3d35;
+    }
+    .aa-info-card p {
+        margin: 0.35rem 0 0 0;
+        color: #4a7a71;
+        font-size: 0.87rem;
+        line-height: 1.55;
+    }
+    .aa-checklist {
+        list-style: none;
+        padding: 0;
+        margin: 0.9rem 0 0 0;
+        display: grid;
+        gap: 0.65rem;
+    }
+    .aa-checklist li {
+        position: relative;
+        padding-left: 1.45rem;
+        color: #285148;
+        font-size: 0.86rem;
+        line-height: 1.45;
+    }
+    .aa-checklist li::before {
+        content: "•";
+        position: absolute;
+        left: 0;
+        top: -0.08rem;
+        color: #0f766e;
+        font-size: 1.15rem;
+        font-weight: 700;
+    }
+    .aa-detail-list {
+        display: grid;
+        gap: 0.75rem;
+        margin-top: 0.95rem;
+    }
+    .aa-detail-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.9rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid #e3efec;
+    }
+    .aa-detail-row:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+    .aa-detail-row .aa-label {
+        color: #65857d;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+    }
+    .aa-detail-row .aa-value {
+        color: #0d3d35;
+        font-size: 0.86rem;
+        font-weight: 700;
+        line-height: 1.45;
+        text-align: right;
+    }
+    .aa-callout {
+        display: flex;
+        gap: 0.8rem;
+        align-items: flex-start;
+        padding: 1rem 1.1rem;
+        border-radius: 15px;
+        border: 1px solid #d1e4e0;
+        margin: 0.9rem 0 1rem 0;
+    }
+    .aa-callout.aa-callout-success {
+        background: linear-gradient(90deg, #ecfdf5, #f6fffb);
+        border-color: #9adebf;
+    }
+    .aa-callout.aa-callout-info {
+        background: linear-gradient(90deg, #eef8f6, #ffffff);
+        border-color: #b8ddd6;
+    }
+    .aa-callout.aa-callout-warning {
+        background: linear-gradient(90deg, #fff7ed, #ffffff);
+        border-color: #fdba74;
+    }
+    .aa-callout .aa-callout-icon {
+        flex-shrink: 0;
+        font-size: 1.15rem;
+        line-height: 1;
+    }
+    .aa-callout strong {
+        display: block;
+        color: #0d3d35;
+        font-size: 0.92rem;
+        margin-bottom: 0.2rem;
+    }
+    .aa-callout span {
+        display: block;
+        color: #4a7a71;
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+    .aa-otp-card {
+        padding: 1rem 1.1rem 1.1rem;
+        border-radius: 16px;
+        border: 1px solid #b8ddd6;
+        background: linear-gradient(145deg, #eef8f6, #ffffff);
+        margin: 0.9rem 0 1rem 0;
+    }
+    .aa-otp-card h3 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #0d3d35;
+    }
+    .aa-otp-card p {
+        margin: 0.35rem 0 0 0;
+        color: #4a7a71;
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+    .aa-otp-code {
+        display: inline-block;
+        margin-top: 0.8rem;
+        padding: 0.55rem 0.9rem;
+        border-radius: 12px;
+        background: #ffffff;
+        border: 1px solid #cde6e0;
+        color: #0d3d35;
+        font-family: 'SFMono-Regular', 'Menlo', 'Monaco', monospace;
+        font-size: 1.45rem;
+        font-weight: 800;
+        letter-spacing: 0.2em;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+    }
+    .aa-progress-card,
+    .aa-status-card {
+        padding: 1.15rem 1.25rem;
+        border-radius: 16px;
+        border: 1px solid #d1e4e0;
+        background: #ffffff;
+        box-shadow: 0 2px 10px rgba(15, 118, 110, 0.07);
+        height: 100%;
+    }
+    .aa-progress-card h3,
+    .aa-status-card h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: 800;
+        color: #0d3d35;
+    }
+    .aa-progress-card p,
+    .aa-status-card p {
+        margin: 0.35rem 0 0 0;
+        color: #4a7a71;
+        font-size: 0.86rem;
+        line-height: 1.55;
+    }
+    .aa-progress-track {
+        width: 100%;
+        height: 0.7rem;
+        border-radius: 999px;
+        background: #e6f4f1;
+        overflow: hidden;
+        margin: 0.95rem 0 0.7rem 0;
+    }
+    .aa-progress-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #0f766e, #14b8a6);
+    }
+    .aa-progress-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        color: #4a7a71;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .aa-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-bottom: 0.8rem;
+        padding: 0.34rem 0.74rem;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+    }
+    .aa-status-pill.aa-good {
+        background: #e8fbf3;
+        color: #047857;
+    }
+    .aa-status-pill.aa-risk {
+        background: #fff1f2;
+        color: #be123c;
     }
 
     /* ── Divider ── */
@@ -366,6 +678,25 @@ APP_CSS = """
         text-transform: uppercase;
         color: #0f766e;
         margin: 1.2rem 0 0.6rem 0;
+    }
+
+    @media (max-width: 900px) {
+        .aa-student-hero-card {
+            padding: 1.2rem 1.1rem;
+        }
+        .aa-student-hero-card h2 {
+            font-size: 1.45rem;
+        }
+        .aa-detail-row {
+            flex-direction: column;
+        }
+        .aa-detail-row .aa-value {
+            text-align: left;
+        }
+        .aa-otp-code {
+            font-size: 1.2rem;
+            letter-spacing: 0.16em;
+        }
     }
 </style>
 """
@@ -829,22 +1160,12 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
 
 
 def render_student_page(repo: AttendanceRepository, settings) -> None:
-    st.markdown(
-        """
-        <div class="aa-section-header">
-            <div class="aa-sh-icon">🎒</div>
-            <div class="aa-sh-body">
-                <h2>Student Portal</h2>
-                <p>Access is only available during your active class window and from inside the classroom boundary.</p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    _render_otp_delivery_notice(settings)
-
     auth = st.session_state.get("student_auth")
+    st.title("Student Portal")
+
     if not auth:
+        _render_student_portal_intro(settings)
+        _render_otp_delivery_notice(settings)
         _render_student_login(repo, settings)
         return
 
@@ -867,86 +1188,6 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
         )
         return
 
-    top_left, top_right = st.columns([2.5, 1.0])
-    with top_left:
-        st.markdown(
-            f"""
-            <div class="aa-student-info">
-                <p class="aa-si-name">👋 {student['full_name']}</p>
-                <p class="aa-si-meta">
-                    Student ID: <code>{student['university_id']}</code> &nbsp;·&nbsp;
-                    {course['title']}
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with top_right:
-        st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
-        if st.button("Sign out", use_container_width=True):
-            st.session_state["student_auth"] = None
-            _reset_student_access_flow(clear_student_id=False)
-            _clear_cached_database_reads()
-            st.rerun()
-
-    st.markdown(
-        f"""
-        <div class="aa-window-banner">
-            <span class="aa-wb-icon">🟢</span>
-            Attendance window open — <strong>{active_schedule['label']}</strong>
-            &nbsp;({active_schedule['start_time']} – {active_schedule['end_time']})
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class="portal-card">
-            <p class="portal-kicker">📍 Attendance Stamp</p>
-            <h3>Share your current classroom location</h3>
-            <p>A fresh location check is required each time you stamp attendance, ensuring your
-            live position is inside the classroom boundary.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    student_stamp_geo = geo_capture(
-        button_label="Share current location to stamp attendance",
-        key="student_stamp_geo_capture",
-    )
-    _handle_student_stamp_gate(student_stamp_geo)
-    if st.session_state.get("student_stamp_geolocation") is not None:
-        st.info("Current location captured. You can now stamp this attendance window.")
-
-    if (
-        st.session_state.get("student_stamp_result") is None
-        and st.session_state.get("student_stamp_geolocation") is not None
-        and st.button("Stamp current attendance", use_container_width=True)
-    ):
-        result = stamp_attendance(
-            repo,
-            settings,
-            course=course,
-            student=student,
-            geolocation_payload=st.session_state["student_stamp_geolocation"],
-        )
-        st.session_state["student_stamp_result"] = {
-            "success": result.success,
-            "message": result.message,
-        }
-        if result.success:
-            st.session_state["student_stamp_geolocation"] = None
-            _clear_cached_database_reads()
-        st.rerun()
-
-    stamp_result = st.session_state.get("student_stamp_result")
-    if stamp_result:
-        if stamp_result["success"]:
-            st.success(stamp_result["message"])
-        else:
-            st.error(stamp_result["message"])
-
     summary = build_student_attendance_summary(
         repo,
         settings,
@@ -959,22 +1200,105 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
             int(student["id"]),
         ),
     )
+
+    top_left, top_right = st.columns([2.6, 0.9], gap="large")
+    with top_left:
+        st.subheader(course["title"])
+        st.caption(
+            f"{course['code']} • {student['full_name']} • Student ID {student['university_id']}"
+        )
+    with top_right:
+        if st.button("Sign out", use_container_width=True):
+            st.session_state["student_auth"] = None
+            _reset_student_access_flow(clear_student_id=False)
+            _clear_cached_database_reads()
+            st.rerun()
+
+    st.success(
+        f"Attendance window open: {active_schedule['label']} "
+        f"({active_schedule['start_time']} - {active_schedule['end_time']})"
+    )
+
+    overview_cols = st.columns(3)
+    overview_cols[0].metric("Classroom radius", f"{float(course['radius_m']):.1f} m")
+    overview_cols[1].metric("Timezone", settings.app_timezone)
+    overview_cols[2].metric("Absence limit", f"{float(course['absence_limit_pct']):.0f}%")
+
+    with st.container(border=True):
+        st.subheader("Stamp attendance")
+        st.write(
+            "Share your current classroom location, then submit the stamp while this class window is open."
+        )
+        student_stamp_geo = geo_capture(
+            button_label="Share current location to stamp attendance",
+            key="student_stamp_geo_capture",
+        )
+        _handle_student_stamp_gate(student_stamp_geo)
+        if st.session_state.get("student_stamp_geolocation") is not None:
+            st.info(
+                "Location captured. Submit your attendance stamp while this class window is still open."
+            )
+
+        if (
+            st.session_state.get("student_stamp_result") is None
+            and st.session_state.get("student_stamp_geolocation") is not None
+            and st.button("Stamp current attendance", use_container_width=True)
+        ):
+            result = stamp_attendance(
+                repo,
+                settings,
+                course=course,
+                student=student,
+                geolocation_payload=st.session_state["student_stamp_geolocation"],
+            )
+            st.session_state["student_stamp_result"] = {
+                "success": result.success,
+                "message": result.message,
+            }
+            if result.success:
+                st.session_state["student_stamp_geolocation"] = None
+                _clear_cached_database_reads()
+            st.rerun()
+
+        stamp_result = st.session_state.get("student_stamp_result")
+        if stamp_result:
+            if stamp_result["success"]:
+                st.success(stamp_result["message"])
+            else:
+                st.error(stamp_result["message"])
+
+    st.subheader("Attendance summary")
     metrics = st.columns(4)
     metrics[0].metric("Attended", summary.attended_count)
     metrics[1].metric("Absences", summary.absences)
     metrics[2].metric("Meetings elapsed", summary.elapsed_meetings)
     metrics[3].metric("Total meetings", summary.total_meetings)
 
-    status_text = "Denied Exam Entry" if summary.denied_exam_entry else "Eligible for exam entry"
-    if summary.denied_exam_entry:
-        st.error(status_text)
-    else:
-        st.success(status_text)
+    with st.container(border=True):
+        st.subheader("Exam standing")
+        if summary.denied_exam_entry:
+            st.error("Exam entry is currently denied because you reached the absence threshold.")
+        else:
+            st.success(
+                f"You are still eligible for exam entry. Safe absences remaining: {summary.remaining_safe_absences}."
+            )
+        st.progress(
+            int(round(max(0.0, min(summary.attendance_pct_of_total, 100.0)))),
+            text=f"Attendance recorded: {summary.attendance_pct_of_total:.1f}% of total meetings",
+        )
+        st.caption(
+            f"Absence threshold: {summary.absence_threshold} meetings • "
+            f"Absence exposure: {summary.absence_pct_of_total:.1f}% of total meetings"
+        )
 
-    st.caption(
-        f"Attendance progress: {summary.attendance_pct_of_total:.1f}% of total meetings recorded. "
-        f"Absence exposure: {summary.absence_pct_of_total:.1f}% of total meetings."
-    )
+    with st.expander("Session details", expanded=False):
+        detail_cols = st.columns(2)
+        detail_cols[0].write(f"**Active window:** {active_schedule['label']}")
+        detail_cols[0].write(
+            f"**Time:** {active_schedule['start_time']} - {active_schedule['end_time']}"
+        )
+        detail_cols[1].write(f"**Classroom radius:** {float(course['radius_m']):.1f} m")
+        detail_cols[1].write(f"**Timezone:** {settings.app_timezone}")
 
     recent_records = _cached_list_attendance(
         settings.database_target,
@@ -982,57 +1306,49 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
         int(student["id"]),
         30,
     )
-    st.markdown('<div class="aa-divider"></div>', unsafe_allow_html=True)
-    st.markdown('<p class="aa-subsection">📋 Recent Attendance</p>', unsafe_allow_html=True)
-    if recent_records:
-        st.dataframe(
-            [
-                {
-                    "Date": row["attendance_date"],
-                    "Window": row["schedule_label"],
-                    "Stamped At": row["stamped_at"],
-                    "Distance (m)": round(float(row["distance_m"]), 2),
-                    "Accuracy (m)": round(float(row["accuracy_m"]), 2)
-                    if row["accuracy_m"] is not None
-                    else None,
-                }
-                for row in recent_records
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.caption("You have not stamped any attendance yet.")
+    with st.container(border=True):
+        st.subheader("Recent attendance")
+        if recent_records:
+            st.dataframe(
+                [
+                    {
+                        "Date": row["attendance_date"],
+                        "Window": row["schedule_label"],
+                        "Stamped At": row["stamped_at"],
+                        "Distance (m)": round(float(row["distance_m"]), 2),
+                        "Accuracy (m)": round(float(row["accuracy_m"]), 2)
+                        if row["accuracy_m"] is not None
+                        else None,
+                    }
+                    for row in recent_records
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("You have not stamped any attendance yet.")
 
 
 def _render_student_login(repo: AttendanceRepository, settings) -> None:
-    university_id = st.text_input(
-        "Student ID",
-        value=st.session_state.get("pending_university_id", ""),
-        key="student_login_id_input",
-    )
-    if university_id.strip() != st.session_state.get("pending_university_id", ""):
-        _reset_student_access_flow(clear_student_id=False)
-        st.session_state["pending_university_id"] = university_id.strip()
+    with st.container(border=True):
+        st.subheader("1. Verify classroom access")
+        st.write(
+            "Enter your student ID and share your current location. Access works only during a live class window and only inside the saved classroom boundary."
+        )
+        university_id = st.text_input(
+            "Student ID",
+            value=st.session_state.get("pending_university_id", ""),
+            key="student_login_id_input",
+        )
+        if university_id.strip() != st.session_state.get("pending_university_id", ""):
+            _reset_student_access_flow(clear_student_id=False)
+            st.session_state["pending_university_id"] = university_id.strip()
 
-    st.markdown(
-        """
-        <div class="aa-step-card">
-            <div class="aa-step-badge">1</div>
-            <div class="aa-step-body">
-                <h3>Verify your classroom access</h3>
-                <p>Enter your student ID and share your current location. Access is granted only if
-                your roster record is found, your class is active right now, and you are inside the classroom boundary.</p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    student_geo = geo_capture(
-        button_label="Share location to continue",
-        key="student_access_geo_capture",
-    )
-    _handle_student_access_gate(student_geo, repo, settings, university_id)
+        student_geo = geo_capture(
+            button_label="Share location to continue",
+            key="student_access_geo_capture",
+        )
+        _handle_student_access_gate(student_geo, repo, settings, university_id)
 
     access_context = st.session_state.get("student_access_context")
     if access_context is None:
@@ -1040,55 +1356,36 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
     if not _student_access_context_is_current(repo, settings, access_context):
         _reset_student_access_flow(clear_student_id=False)
         st.info(
-            "The classroom location or active timetable changed. Share your location again to "
-            "continue with the current course settings."
+            "The classroom location or active timetable changed. Share your location again to continue with the current course settings."
         )
         return
 
     st.success(
-        f"Access verified for {access_context['student_name']} in {access_context['course_title']}. "
-        f"You are {access_context['distance_m']:.2f} m from class and inside the active window "
-        f"{access_context['schedule_label']} ({access_context['schedule_start_time']} - "
-        f"{access_context['schedule_end_time']})."
+        f"Access verified for {access_context['student_name']}. You are "
+        f"{access_context['distance_m']:.2f} m from class and inside "
+        f"{access_context['schedule_label']} "
+        f"({access_context['schedule_start_time']} - {access_context['schedule_end_time']})."
     )
+    access_cols = st.columns(3)
+    access_cols[0].metric("Course", access_context["course_code"])
+    access_cols[1].metric("Window", access_context["schedule_label"])
+    access_cols[2].metric("Distance", f"{access_context['distance_m']:.2f} m")
+    st.caption(access_context["course_title"])
 
-    otp_notice = st.session_state.get("student_otp_notice")
-    if otp_notice:
-        st.success(otp_notice)
-    otp_preview_code = st.session_state.get("student_otp_preview_code")
-    if otp_preview_code:
-        st.text_input(
-            "One-time code",
-            value=otp_preview_code,
-            key="student_otp_preview_display",
-            help="Use this code to log in below. Each new request replaces the previous code.",
-        )
-
-    if not st.session_state.get("student_otp_requested", False):
+    with st.container(border=True):
+        st.subheader("2. Request one-time code")
         if settings.otp_delivery_mode == "console":
-            otp_delivery_text = "Your secure code will appear on this page after you generate it."
-            otp_button_label = "Generate OTP"
+            st.write("Generate a code and use the latest value shown on this page.")
+            otp_button_label = "Generate code"
         else:
-            otp_delivery_text = (
-                "A secure code will be sent to the email address stored in your official course roster."
-            )
-            otp_button_label = "Generate OTP via email"
-        st.markdown(
-            f"""
-            <div class="aa-step-card">
-                <div class="aa-step-badge">2</div>
-                <div class="aa-step-body">
-                    <h3>Request your one-time code</h3>
-                    <p>{otp_delivery_text}</p>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            st.write("Generate a code and check the email address saved on your roster.")
+            otp_button_label = "Generate code via email"
+
         configuration_error = otp_delivery_configuration_error(settings)
         if configuration_error:
             st.error(configuration_error)
             return
+
         if st.button(otp_button_label, use_container_width=True):
             try:
                 result = request_login_code_for_access_context(
@@ -1102,41 +1399,64 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
                 st.rerun()
             except Exception as error:  # pragma: no cover - Streamlit surface
                 st.error(str(error))
+
+        otp_notice = st.session_state.get("student_otp_notice")
+        if otp_notice:
+            st.info(otp_notice)
+
+        otp_preview_code = st.session_state.get("student_otp_preview_code")
+        if otp_preview_code:
+            st.text_input(
+                "Latest code",
+                value=otp_preview_code,
+                disabled=True,
+                key="student_otp_preview_display",
+            )
+
+    if not st.session_state.get("student_otp_requested", False):
         return
 
-    st.markdown(
-        f"""
-        <div class="aa-step-card">
-            <div class="aa-step-badge">3</div>
-            <div class="aa-step-body">
-                <h3>Enter your one-time code</h3>
-                <p>{_otp_entry_help_text(settings)}</p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    otp_code = st.text_input("One-time code", type="password", key="student_otp_code_input")
-    if st.button("Login", use_container_width=True):
-        try:
-            course, student = verify_login_code_for_access_context(
-                repo,
-                settings,
-                course_id=int(access_context["course_id"]),
-                student_id=int(access_context["student_id"]),
-                code=otp_code,
+    with st.container(border=True):
+        st.subheader("3. Log in")
+        st.write(_otp_entry_help_text(settings))
+        with st.form("student_otp_login_form"):
+            otp_code = st.text_input(
+                "One-time code",
+                type="password",
+                key="student_otp_code_input",
             )
-            st.session_state["student_auth"] = {
-                "course_id": int(course["id"]),
-                "student_id": int(student["id"]),
-            }
-            st.session_state["student_stamp_result"] = None
-            st.session_state["student_stamp_geolocation"] = None
-            st.session_state["student_otp_notice"] = None
-            st.session_state["student_otp_preview_code"] = None
-            st.rerun()
-        except Exception as error:  # pragma: no cover - Streamlit surface
-            st.error(str(error))
+            submit_login = st.form_submit_button("Log in", use_container_width=True)
+
+        if submit_login:
+            try:
+                course, student = verify_login_code_for_access_context(
+                    repo,
+                    settings,
+                    course_id=int(access_context["course_id"]),
+                    student_id=int(access_context["student_id"]),
+                    code=otp_code,
+                )
+                st.session_state["student_auth"] = {
+                    "course_id": int(course["id"]),
+                    "student_id": int(student["id"]),
+                }
+                st.session_state["student_stamp_result"] = None
+                st.session_state["student_stamp_geolocation"] = None
+                st.session_state["student_otp_notice"] = None
+                st.session_state["student_otp_preview_code"] = None
+                st.rerun()
+            except Exception as error:  # pragma: no cover - Streamlit surface
+                st.error(str(error))
+
+
+def _render_student_portal_intro(settings) -> None:
+    otp_mode_label = "on-page preview" if settings.otp_delivery_mode == "console" else "roster email"
+    st.caption(
+        "Sign in in three steps: verify you are in class, request a one-time code, then log in."
+    )
+    st.info(
+        f"Student access only works during the active class window and inside the saved classroom boundary. OTP delivery mode: {otp_mode_label}."
+    )
 
 
 def _save_course(
@@ -1551,7 +1871,7 @@ def _render_otp_delivery_notice(settings) -> None:
         st.warning(configuration_error)
         return
     if settings.otp_delivery_mode == "console":
-        st.info("Console OTP mode is active. Students will see the login code in the app.")
+        st.info("Console OTP mode is active. Students will see the latest login code in the app.")
 
 
 def _otp_entry_help_text(settings) -> str:
