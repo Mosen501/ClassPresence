@@ -726,17 +726,23 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
         st.markdown('<p class="aa-subsection">🗓️ Weekly Timetable</p>', unsafe_allow_html=True)
         schedules = _cached_list_schedules_for_course(settings.database_target, int(active_course["id"]))
         st.caption(
-            "Standard lecture slots are available as templates. Tick the day boxes to activate a "
-            "slot. Rows with no day selected are ignored on save."
+            "Saved timetable rows are shown below. Add rows directly in the table, or load the "
+            "standard L1-L7 templates when you want to rebuild the weekly grid."
         )
         st.caption(
             "Tick `Remove` and save to remove a row. Removing a saved row may delete linked "
             "attendance records for that window."
         )
-        timetable_rows = _build_timetable_editor_rows(schedules, course_id=int(active_course["id"]))
+        timetable_rows = _build_timetable_editor_rows(
+            schedules,
+            show_default_rows=_should_show_default_timetable_rows(
+                int(active_course["id"]),
+                schedules,
+            ),
+        )
         edited_timetable_rows = st.data_editor(
             timetable_rows,
-            key=f"timetable_editor_{active_course['id']}",
+            key=_timetable_editor_key(int(active_course["id"])),
             hide_index=True,
             num_rows="dynamic",
             use_container_width=True,
@@ -786,9 +792,10 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
                 course_id=int(active_course["id"]),
                 edited_rows=edited_timetable_rows,
             )
-        if st.button("Restore default timetable rows", use_container_width=True):
-            _clear_hidden_default_timetable_rows(int(active_course["id"]))
-            st.session_state["manager_notice"] = "Default timetable rows are visible again."
+        if st.button("Load standard L1-L7 templates", use_container_width=True):
+            _show_default_timetable_rows(int(active_course["id"]))
+            _bump_timetable_editor_version(int(active_course["id"]))
+            st.session_state["manager_notice"] = "Standard L1-L7 templates are visible in the editor."
             st.rerun()
 
     with roster_tab:
@@ -1551,38 +1558,30 @@ def _student_sidebar_otp_text(settings) -> str:
     return "Students authenticate via a one-time code shown inside the app."
 
 
-def _build_timetable_editor_rows(schedules, *, course_id: int) -> list[dict[str, object]]:
+def _build_timetable_editor_rows(schedules, *, show_default_rows: bool) -> list[dict[str, object]]:
     rows_by_label: dict[str, dict[str, object]] = {}
     ordered_labels: list[str] = []
-    hidden_default_labels = _hidden_default_timetable_rows(course_id)
 
-    for default_row in DEFAULT_TIMETABLE_ROWS:
-        label = str(default_row["label"])
-        if label in hidden_default_labels:
-            continue
-        row = {
-            "label": label,
-            "start_time": str(default_row["start_time"]),
-            "end_time": str(default_row["end_time"]),
-            "remove": False,
-        }
-        for day_name, _weekday in TIMETABLE_DAY_COLUMNS:
-            row[day_name] = False
-        rows_by_label[label] = row
-        ordered_labels.append(label)
+    if show_default_rows:
+        for default_row in DEFAULT_TIMETABLE_ROWS:
+            label = str(default_row["label"])
+            row = _empty_timetable_editor_row(
+                label=label,
+                start_time=str(default_row["start_time"]),
+                end_time=str(default_row["end_time"]),
+            )
+            rows_by_label[label] = row
+            ordered_labels.append(label)
 
     for schedule in schedules:
         label = str(schedule["label"])
         row = rows_by_label.get(label)
         if row is None:
-            row = {
-                "label": label,
-                "start_time": str(schedule["start_time"]),
-                "end_time": str(schedule["end_time"]),
-                "remove": False,
-            }
-            for day_name, _weekday in TIMETABLE_DAY_COLUMNS:
-                row[day_name] = False
+            row = _empty_timetable_editor_row(
+                label=label,
+                start_time=str(schedule["start_time"]),
+                end_time=str(schedule["end_time"]),
+            )
             rows_by_label[label] = row
             ordered_labels.append(label)
 
@@ -1604,16 +1603,12 @@ def _save_timetable(
 ) -> None:
     schedule_rows: list[dict[str, str | int]] = []
     used_labels: set[str] = set()
-    hidden_default_labels = set(_hidden_default_timetable_rows(course_id))
-    default_labels = {str(row["label"]) for row in DEFAULT_TIMETABLE_ROWS}
 
     for row in _coerce_timetable_editor_rows(edited_rows):
         label = str(row.get("label", "") or "").strip()
         start_time = str(row.get("start_time", "") or "").strip()
         end_time = str(row.get("end_time", "") or "").strip()
         if bool(row.get("remove", False)):
-            if label in default_labels:
-                hidden_default_labels.add(label)
             continue
         selected_days = [
             (day_name, weekday)
@@ -1663,7 +1658,8 @@ def _save_timetable(
             schedule_rows=schedule_rows,
             created_at=now_in_app_timezone(settings).isoformat(),
         )
-        _set_hidden_default_timetable_rows(course_id, hidden_default_labels)
+        _hide_default_timetable_rows(course_id)
+        _bump_timetable_editor_version(course_id)
         _clear_cached_database_reads()
         st.session_state["manager_notice"] = "Course timetable saved successfully."
         st.rerun()
@@ -1678,20 +1674,46 @@ def _weekday_to_editor_day_name(weekday: int) -> str | None:
     return None
 
 
-def _hidden_default_timetable_rows(course_id: int) -> set[str]:
-    return set(st.session_state.get(_hidden_timetable_key(course_id), set()))
+def _empty_timetable_editor_row(*, label: str, start_time: str, end_time: str) -> dict[str, object]:
+    row: dict[str, object] = {
+        "label": label,
+        "start_time": start_time,
+        "end_time": end_time,
+        "remove": False,
+    }
+    for day_name, _weekday in TIMETABLE_DAY_COLUMNS:
+        row[day_name] = False
+    return row
 
 
-def _set_hidden_default_timetable_rows(course_id: int, labels: set[str]) -> None:
-    st.session_state[_hidden_timetable_key(course_id)] = sorted(labels)
+def _should_show_default_timetable_rows(course_id: int, schedules) -> bool:
+    return not schedules or bool(st.session_state.get(_show_default_timetable_key(course_id), False))
 
 
-def _clear_hidden_default_timetable_rows(course_id: int) -> None:
-    st.session_state[_hidden_timetable_key(course_id)] = []
+def _show_default_timetable_rows(course_id: int) -> None:
+    st.session_state[_show_default_timetable_key(course_id)] = True
 
 
-def _hidden_timetable_key(course_id: int) -> str:
-    return f"hidden_default_timetable_rows_{course_id}"
+def _hide_default_timetable_rows(course_id: int) -> None:
+    st.session_state[_show_default_timetable_key(course_id)] = False
+
+
+def _show_default_timetable_key(course_id: int) -> str:
+    return f"show_default_timetable_rows_{course_id}"
+
+
+def _timetable_editor_key(course_id: int) -> str:
+    version = st.session_state.get(_timetable_editor_version_key(course_id), 0)
+    return f"timetable_editor_{course_id}_{version}"
+
+
+def _bump_timetable_editor_version(course_id: int) -> None:
+    key = _timetable_editor_version_key(course_id)
+    st.session_state[key] = int(st.session_state.get(key, 0)) + 1
+
+
+def _timetable_editor_version_key(course_id: int) -> str:
+    return f"timetable_editor_version_{course_id}"
 
 
 def _coerce_timetable_editor_rows(edited_rows) -> list[dict[str, object]]:
