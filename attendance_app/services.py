@@ -284,9 +284,11 @@ def build_student_attendance_summary(
     *,
     course,
     student,
+    schedules: list[dict] | None = None,
+    attended_count: int | None = None,
 ) -> AttendanceSummary:
     now = now_in_app_timezone(settings)
-    schedules = repo.list_schedules_for_course(int(course["id"]))
+    schedules = schedules if schedules is not None else repo.list_schedules_for_course(int(course["id"]))
     elapsed_occurrences = generate_expected_occurrences(
         course["start_date"],
         course["end_date"] or course["start_date"],
@@ -301,10 +303,11 @@ def build_student_attendance_summary(
         now,
         only_elapsed=False,
     )
-    attended_count = repo.count_attendance(
-        course_id=int(course["id"]),
-        student_id=int(student["id"]),
-    )
+    if attended_count is None:
+        attended_count = repo.count_attendance(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+        )
     return build_attendance_summary(
         attended_count=attended_count,
         elapsed_meetings=len(elapsed_occurrences),

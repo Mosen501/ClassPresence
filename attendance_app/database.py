@@ -638,6 +638,18 @@ class AttendanceRepository:
         )
         return int(row["attendance_count"]) if row else 0
 
+    def count_attendance_by_student_for_course(self, *, course_id: int) -> dict[int, int]:
+        rows = self._fetchall(
+            """
+            SELECT student_id, COUNT(*) AS attendance_count
+            FROM attendance_records
+            WHERE course_id = ?
+            GROUP BY student_id
+            """,
+            (course_id,),
+        )
+        return {int(row["student_id"]): int(row["attendance_count"]) for row in rows}
+
     def list_attendance(self, *, course_id: int, student_id: int, limit: int = 30) -> list[Record]:
         return self._fetchall(
             """
