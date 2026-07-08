@@ -576,6 +576,7 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
 
     courses = _cached_list_courses(settings.database_target)
     course_options = ["New course", *[str(course["code"]) for course in courses]]
+    _prepare_manager_course_selector(course_options)
     selected_code = st.selectbox(
         "Course to set up",
         options=course_options,
@@ -1215,7 +1216,7 @@ def _save_course(
             _invalidate_student_access_for_course(int(persisted_course["id"]))
         _clear_cached_database_reads()
         st.session_state["loaded_course_location_signature"] = None
-        st.session_state["manager_course_selector"] = normalized_code
+        st.session_state["pending_manager_course_selector"] = normalized_code
         st.session_state["manager_notice"] = f"Course {normalized_code} saved successfully."
         st.rerun()
     except Exception as error:  # pragma: no cover - Streamlit surface
@@ -1456,6 +1457,19 @@ def _safe_health_error(error: Exception) -> str:
     return message[:500]
 
 
+def _prepare_manager_course_selector(course_options: list[str]) -> None:
+    pending_course = st.session_state.pop("pending_manager_course_selector", None)
+    if pending_course is not None:
+        st.session_state["manager_course_selector"] = (
+            pending_course if pending_course in course_options else "New course"
+        )
+        return
+
+    current_course = st.session_state.get("manager_course_selector", "New course")
+    if current_course not in course_options:
+        st.session_state["manager_course_selector"] = "New course"
+
+
 def _render_report_restore_uploader(repo: AttendanceRepository, settings, *, key_suffix: str) -> None:
     st.markdown('<p class="aa-subsection">📥 Restore From Report</p>', unsafe_allow_html=True)
     st.caption(
@@ -1484,7 +1498,7 @@ def _render_report_restore_uploader(repo: AttendanceRepository, settings, *, key
                 content=restore_file.getvalue(),
             )
             _clear_cached_database_reads()
-            st.session_state["manager_course_selector"] = str(summary["course_code"])
+            st.session_state["pending_manager_course_selector"] = str(summary["course_code"])
             st.session_state["manager_notice"] = (
                 f"Restored {summary['course_code']} with {summary['roster_rows']} roster rows, "
                 f"{summary['schedule_rows']} timetable rows, and {summary['imported_attendance']} "
