@@ -945,20 +945,28 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
     otp_preview_code = st.session_state.get("student_otp_preview_code")
     if otp_preview_code:
         st.text_input(
-            "Development OTP preview",
+            "One-time code",
             value=otp_preview_code,
             key="student_otp_preview_display",
-            help="This appears only in local development when OTP delivery mode is console.",
+            help="Use this code to log in below. Each new request replaces the previous code.",
         )
 
     if not st.session_state.get("student_otp_requested", False):
+        if settings.otp_delivery_mode == "console":
+            otp_delivery_text = "Your secure code will appear on this page after you generate it."
+            otp_button_label = "Generate OTP"
+        else:
+            otp_delivery_text = (
+                "A secure code will be sent to the email address stored in your official course roster."
+            )
+            otp_button_label = "Generate OTP via email"
         st.markdown(
-            """
+            f"""
             <div class="aa-step-card">
                 <div class="aa-step-badge">2</div>
                 <div class="aa-step-body">
                     <h3>Request your one-time code</h3>
-                    <p>A secure code will be sent to the email address stored in your official course roster.</p>
+                    <p>{otp_delivery_text}</p>
                 </div>
             </div>
             """,
@@ -968,7 +976,7 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
         if configuration_error:
             st.error(configuration_error)
             return
-        if st.button("Generate OTP via email", use_container_width=True):
+        if st.button(otp_button_label, use_container_width=True):
             try:
                 result = request_login_code_for_access_context(
                     repo,
@@ -984,12 +992,12 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
         return
 
     st.markdown(
-        """
+        f"""
         <div class="aa-step-card">
             <div class="aa-step-badge">3</div>
             <div class="aa-step-body">
                 <h3>Enter your one-time code</h3>
-                <p>Use the latest code sent to your roster email. Each login requires a fresh code.</p>
+                <p>{_otp_entry_help_text(settings)}</p>
             </div>
         </div>
         """,
@@ -1341,7 +1349,13 @@ def _render_otp_delivery_notice(settings) -> None:
         st.warning(configuration_error)
         return
     if settings.otp_delivery_mode == "console":
-        st.info("Development mode is showing OTP codes in-app instead of sending email.")
+        st.info("Console OTP mode is active. Students will see the login code in the app.")
+
+
+def _otp_entry_help_text(settings) -> str:
+    if settings.otp_delivery_mode == "console":
+        return "Use the latest code shown above. Each login requires a fresh code."
+    return "Use the latest code sent to your roster email. Each login requires a fresh code."
 
 
 def _build_timetable_editor_rows(schedules) -> list[dict[str, object]]:

@@ -216,7 +216,7 @@ class ServicesTestCase(unittest.TestCase):
             ],
         )
 
-    def test_otp_delivery_configuration_error_flags_production_console_mode(self) -> None:
+    def test_otp_delivery_configuration_error_accepts_console_mode(self) -> None:
         production_settings = Settings(
             app_env="production",
             app_timezone="Asia/Riyadh",
@@ -234,10 +234,7 @@ class ServicesTestCase(unittest.TestCase):
             smtp_use_tls=True,
         )
 
-        error = otp_delivery_configuration_error(production_settings)
-        self.assertIsNotNone(error)
-        assert error is not None
-        self.assertIn("console OTP mode", error)
+        self.assertIsNone(otp_delivery_configuration_error(production_settings))
 
     def test_otp_delivery_configuration_error_accepts_complete_email_settings(self) -> None:
         email_settings = Settings(

@@ -55,12 +55,7 @@ class StudentAccessContext:
 
 def otp_delivery_configuration_error(settings: Settings) -> str | None:
     if settings.otp_delivery_mode == "console":
-        if settings.is_development:
-            return None
-        return (
-            "This deployment is still using console OTP mode. Set `OTP_DELIVERY_MODE=\"email\"` "
-            "and add your SMTP settings in Streamlit Community Cloud secrets."
-        )
+        return None
 
     if settings.otp_delivery_mode != "email":
         return (
@@ -484,7 +479,7 @@ def _deliver_otp(
 ) -> OTPRequestResult:
     if settings.otp_delivery_mode == "console":
         return OTPRequestResult(
-            message="A one-time code has been generated in development mode.",
+            message="A one-time code has been generated and shown on this page.",
             preview_code=code,
         )
 
