@@ -730,7 +730,8 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
             "Rows with no day selected are ignored on save."
         )
         st.caption(
-            "⚠️ Removing a saved row may delete linked attendance records for that window."
+            "Tick `Remove` and save to remove a row. Removing a saved row may delete linked "
+            "attendance records for that window."
         )
         timetable_rows = _build_timetable_editor_rows(schedules)
         edited_timetable_rows = st.data_editor(
@@ -748,6 +749,7 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
                 "Tuesday",
                 "Wednesday",
                 "Thursday",
+                "remove",
             ],
             column_config={
                 "label": st.column_config.TextColumn(
@@ -770,6 +772,11 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
                 "Tuesday": st.column_config.CheckboxColumn("Tuesday"),
                 "Wednesday": st.column_config.CheckboxColumn("Wednesday"),
                 "Thursday": st.column_config.CheckboxColumn("Thursday"),
+                "remove": st.column_config.CheckboxColumn(
+                    "Remove",
+                    help="Tick this row and save timetable to remove it.",
+                    default=False,
+                ),
             },
         )
         if st.button("Save timetable", use_container_width=True):
@@ -1483,6 +1490,7 @@ def _build_timetable_editor_rows(schedules) -> list[dict[str, object]]:
             "label": label,
             "start_time": str(default_row["start_time"]),
             "end_time": str(default_row["end_time"]),
+            "remove": False,
         }
         for day_name, _weekday in TIMETABLE_DAY_COLUMNS:
             row[day_name] = False
@@ -1497,6 +1505,7 @@ def _build_timetable_editor_rows(schedules) -> list[dict[str, object]]:
                 "label": label,
                 "start_time": str(schedule["start_time"]),
                 "end_time": str(schedule["end_time"]),
+                "remove": False,
             }
             for day_name, _weekday in TIMETABLE_DAY_COLUMNS:
                 row[day_name] = False
@@ -1526,6 +1535,8 @@ def _save_timetable(
         label = str(row.get("label", "") or "").strip()
         start_time = str(row.get("start_time", "") or "").strip()
         end_time = str(row.get("end_time", "") or "").strip()
+        if bool(row.get("remove", False)):
+            continue
         selected_days = [
             (day_name, weekday)
             for day_name, weekday in TIMETABLE_DAY_COLUMNS
