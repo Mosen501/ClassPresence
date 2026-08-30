@@ -153,7 +153,7 @@
       window.addEventListener("message", (event) => {
         if (event.data.type !== "streamlit:render") return;
         componentArgs = event.data.args;
-        locale = componentArgs.locale === "ar" ? "ar" : "en";
+        locale = componentArgs.locale === "en" ? "en" : "ar";
         document.documentElement.lang = locale;
         document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
         document.body.dir = document.documentElement.dir;

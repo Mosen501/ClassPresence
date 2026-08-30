@@ -121,7 +121,7 @@
         if (event.data.type !== "streamlit:render") {
           return;
         }
-        locale = event.data.args.locale === "ar" ? "ar" : "en";
+        locale = event.data.args.locale === "en" ? "en" : "ar";
         document.documentElement.lang = locale;
         document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
         document.body.dir = document.documentElement.dir;

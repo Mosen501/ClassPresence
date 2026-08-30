@@ -1813,7 +1813,6 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
                 student_geo = geo_capture(
                     "التحقق من موقع القاعة",
                     key="student_access_location",
-                    locale="ar",
                 )
                 _handle_student_access_location(student_geo, repo, settings, university_id)
         else:
@@ -1951,7 +1950,6 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
         stamp_geo = geo_capture(
             "تحديد موقعي الحالي",
             key="student_stamp_location",
-            locale="ar",
         )
         _handle_stamp_location(stamp_geo)
         if st.session_state.get("student_stamp_geolocation") is not None and st.button(
@@ -2642,7 +2640,6 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
         options_json=operation["options_json"],
         operation_id=operation["id"],
         key=f"student_passkey_{operation['id']}",
-        locale="ar",
     )
     if not payload or payload.get("operation_id") != operation["id"]:
         return

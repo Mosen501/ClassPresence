@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta
+from inspect import signature
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -11,12 +12,17 @@ from zoneinfo import ZoneInfo
 from streamlit.testing.v1 import AppTest
 
 from app import STUDENT_SECTION_LABELS, STUDENT_SECTIONS, _student_message
+from attendance_app.components import geo_capture, passkey_action
 from attendance_app.database import AttendanceRepository
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 
 
 class AppNavigationTestCase(unittest.TestCase):
+    def test_student_components_keep_warm_deployment_compatible_signatures(self) -> None:
+        self.assertNotIn("locale", signature(geo_capture).parameters)
+        self.assertNotIn("locale", signature(passkey_action).parameters)
+
     def test_student_localization_keeps_internal_navigation_values(self) -> None:
         self.assertEqual(STUDENT_SECTIONS, ["Check in", "Status", "History"])
         self.assertEqual(

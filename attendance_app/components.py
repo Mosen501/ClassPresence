@@ -15,8 +15,8 @@ _PASSKEY_PATH = Path(__file__).resolve().parent / "frontend" / "passkey"
 _passkey = components.declare_component("passkey", path=str(_PASSKEY_PATH))
 
 
-def geo_capture(button_label: str, key: str, *, locale: str = "en"):
-    return _geo_capture(buttonLabel=button_label, locale=locale, key=key, default=None)
+def geo_capture(button_label: str, key: str):
+    return _geo_capture(buttonLabel=button_label, key=key, default=None)
 
 
 def location_picker(
@@ -43,13 +43,11 @@ def passkey_action(
     options_json: str,
     operation_id: str,
     key: str,
-    locale: str = "en",
 ):
     return _passkey(
         action=action,
         optionsJson=options_json,
         operationId=operation_id,
-        locale=locale,
         key=key,
         default=None,
     )
