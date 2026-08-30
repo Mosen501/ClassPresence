@@ -748,6 +748,256 @@ APP_CSS = """
         padding: 0.12rem 0.34rem;
     }
 
+    [data-testid="stSidebar"],
+    [data-testid="collapsedControl"],
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
+
+    .block-container {
+        max-width: 1380px;
+        padding-top: 1.25rem;
+        padding-bottom: 3.5rem;
+    }
+
+    .aa-app-shell {
+        position: relative;
+        overflow: hidden;
+        margin-bottom: 1.35rem;
+        padding: 1.7rem 1.8rem 1.6rem;
+        border-radius: 32px;
+        background:
+            linear-gradient(140deg, rgba(255, 255, 255, 0.95) 0%, rgba(247, 243, 235, 0.92) 52%, rgba(236, 242, 255, 0.92) 100%);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+    }
+
+    .aa-app-shell::before {
+        content: "";
+        position: absolute;
+        width: 340px;
+        height: 340px;
+        right: -120px;
+        top: -130px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(29, 78, 216, 0.14) 0%, rgba(29, 78, 216, 0) 72%);
+    }
+
+    .aa-app-shell::after {
+        content: "";
+        position: absolute;
+        width: 280px;
+        height: 280px;
+        left: -90px;
+        bottom: -140px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(180, 83, 9, 0.10) 0%, rgba(180, 83, 9, 0) 72%);
+    }
+
+    .aa-app-shell > * {
+        position: relative;
+        z-index: 1;
+    }
+
+    .aa-app-topline {
+        display: flex;
+        justify-content: space-between;
+        gap: 1.25rem;
+        align-items: flex-start;
+        margin-bottom: 1.1rem;
+    }
+
+    .aa-app-brand {
+        max-width: 48rem;
+    }
+
+    .aa-app-brand span {
+        display: inline-block;
+        font-size: 0.73rem;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #8b5e34;
+        margin-bottom: 0.55rem;
+    }
+
+    .aa-app-brand h1 {
+        margin: 0;
+        font-size: 3rem;
+        line-height: 0.96;
+        letter-spacing: -0.07em;
+        color: #111827;
+    }
+
+    .aa-app-brand p {
+        margin: 0.8rem 0 0 0;
+        max-width: 44rem;
+        font-size: 0.98rem;
+        line-height: 1.7;
+        color: #5b6477;
+    }
+
+    .aa-app-signals {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+        gap: 0.7rem;
+        width: min(360px, 100%);
+    }
+
+    .aa-app-signal {
+        padding: 0.9rem 0.95rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+    }
+
+    .aa-app-signal span {
+        display: block;
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #7c879c;
+        margin-bottom: 0.35rem;
+    }
+
+    .aa-app-signal strong {
+        display: block;
+        font-size: 0.9rem;
+        line-height: 1.45;
+        color: #111827;
+    }
+
+    .aa-nav-strip {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: center;
+    }
+
+    .aa-nav-strip p {
+        margin: 0;
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #6b7280;
+    }
+
+    .aa-toolbar-panel {
+        margin-bottom: 1.15rem;
+        padding: 1rem 1.05rem;
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.84);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        box-shadow: 0 12px 26px rgba(15, 23, 42, 0.05);
+    }
+
+    .aa-hero-panel {
+        padding: 1.35rem 1.4rem;
+        border-radius: 26px;
+        background: linear-gradient(145deg, #111827 0%, #1f2937 58%, #0f766e 100%);
+        color: #ffffff;
+        box-shadow: 0 18px 38px rgba(17, 24, 39, 0.20);
+    }
+
+    .aa-hero-panel span {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.72);
+        margin-bottom: 0.5rem;
+    }
+
+    .aa-hero-panel h2 {
+        margin: 0;
+        font-size: 2rem;
+        line-height: 1.02;
+        letter-spacing: -0.06em;
+        color: #ffffff;
+    }
+
+    .aa-hero-panel p {
+        margin: 0.7rem 0 0 0;
+        max-width: 38rem;
+        font-size: 0.95rem;
+        line-height: 1.65;
+        color: rgba(255, 255, 255, 0.82);
+    }
+
+    .aa-role-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .aa-role-card {
+        min-height: 220px;
+        padding: 0.2rem 0.15rem 0;
+    }
+
+    .aa-role-card span {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: #8b5e34;
+        margin-bottom: 0.5rem;
+    }
+
+    .aa-role-card h3 {
+        margin: 0;
+        font-size: 1.65rem;
+        line-height: 1.05;
+        letter-spacing: -0.04em;
+        color: #111827;
+    }
+
+    .aa-role-card p {
+        margin: 0.75rem 0 1rem 0;
+        font-size: 0.92rem;
+        line-height: 1.55;
+        color: #5b6477;
+    }
+
+    .aa-role-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-bottom: 1rem;
+    }
+
+    .aa-role-meta strong {
+        padding: 0.38rem 0.68rem;
+        border-radius: 999px;
+        background: rgba(241, 245, 249, 0.95);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        font-size: 0.76rem;
+        font-weight: 700;
+        color: #475569;
+    }
+
+    .aa-toolbar-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.8fr) minmax(240px, 0.8fr) 150px;
+        gap: 0.9rem;
+        align-items: end;
+    }
+
+    .aa-student-toolbar-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.8fr) minmax(220px, 0.9fr) 150px;
+        gap: 0.9rem;
+        align-items: end;
+    }
+
+    .aa-compact-panel {
+        margin-bottom: 1.15rem;
+    }
+
     .aa-route-header {
         display: flex;
         justify-content: space-between;
@@ -904,6 +1154,23 @@ APP_CSS = """
 
         .aa-route-tags {
             justify-content: flex-start;
+        }
+
+        .aa-app-topline,
+        .aa-nav-strip {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .aa-app-signals {
+            grid-template-columns: 1fr;
+            width: 100%;
+        }
+
+        .aa-role-grid,
+        .aa-toolbar-grid,
+        .aa-student-toolbar-grid {
+            grid-template-columns: 1fr;
         }
 
         .aa-student-grid {
@@ -1266,6 +1533,16 @@ def _selected_manager_course(settings) -> dict | None:
 
 
 def _render_route_header(label: str, title: str, description: str, *, tags: list[str] | None = None) -> None:
+    label_markup = (
+        f'<span class="aa-route-label">{escape(label)}</span>'
+        if label.strip()
+        else ""
+    )
+    description_markup = (
+        f'<p class="aa-route-description">{escape(description)}</p>'
+        if description.strip()
+        else ""
+    )
     tag_markup = ""
     if tags:
         tag_markup = '<div class="aa-route-tags">' + "".join(
@@ -1276,9 +1553,9 @@ def _render_route_header(label: str, title: str, description: str, *, tags: list
         f"""
         <section class="aa-route-header">
             <div class="aa-route-copy">
-                <span class="aa-route-label">{escape(label)}</span>
+                {label_markup}
                 <h1 class="aa-route-title">{escape(title)}</h1>
-                <p class="aa-route-description">{escape(description)}</p>
+                {description_markup}
             </div>
             {tag_markup}
         </section>
@@ -1293,8 +1570,103 @@ def _course_covers_date(course, target_date: date) -> bool:
     return start <= target_date <= end
 
 
+def _active_role() -> str | None:
+    if st.session_state.get("manager_auth") is not None:
+        st.session_state["active_role"] = "Manager"
+        return "Manager"
+    if st.session_state.get("student_auth") is not None:
+        st.session_state["active_role"] = "Student"
+        return "Student"
+    active_role = st.session_state.get("active_role")
+    if active_role in {"Manager", "Student"}:
+        return str(active_role)
+    return None
+
+
+def _render_app_shell(title: str, settings, *, badge: str, signals: list[tuple[str, str]]) -> None:
+    signal_markup = "".join(
+        f"""
+        <div class="aa-app-signal">
+            <span>{escape(label)}</span>
+            <strong>{escape(value)}</strong>
+        </div>
+        """
+        for label, value in signals
+    )
+    st.markdown(
+        f"""
+        <section class="aa-app-shell">
+            <div class="aa-app-topline">
+                <div class="aa-app-brand">
+                    <span>{escape(badge)}</span>
+                    <h1>{escape(title)}</h1>
+                </div>
+                <div class="aa-app-signals">
+                    {signal_markup}
+                </div>
+            </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_role_home(settings) -> None:
+    _render_app_shell(
+        "ClassPresence",
+        settings,
+        badge="Attendance",
+        signals=[
+            ("Date", now_in_app_timezone(settings).strftime("%b %d, %Y")),
+            ("Timezone", settings.app_timezone),
+            ("Code", _otp_mode_label(settings)),
+        ],
+    )
+    left, right = st.columns(2, gap="large")
+    with left:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="aa-role-card">
+                    <span>Manager</span>
+                    <h3>Operations Portal</h3>
+                    <p>Courses, rosters, reports.</p>
+                    <div class="aa-role-meta">
+                        <strong>Course setup</strong>
+                        <strong>Attendance log</strong>
+                        <strong>Exports</strong>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("Open manager portal", key="open_manager_role", use_container_width=True):
+                st.session_state["active_role"] = "Manager"
+                st.rerun()
+    with right:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="aa-role-card">
+                    <span>Student</span>
+                    <h3>Check-In Portal</h3>
+                    <p>Access, code, attendance.</p>
+                    <div class="aa-role-meta">
+                        <strong>Location</strong>
+                        <strong>One-time code</strong>
+                        <strong>Status</strong>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("Open student portal", key="open_student_role", use_container_width=True):
+                st.session_state["active_role"] = "Student"
+                st.rerun()
+
+
 def main() -> None:
-    st.set_page_config(page_title="AttendancApp", page_icon="A", layout="wide")
+    st.set_page_config(page_title="ClassPresence", page_icon="C", layout="wide")
     st.markdown(APP_CSS, unsafe_allow_html=True)
 
     settings = load_settings(_safe_secrets())
@@ -1311,32 +1683,48 @@ def main() -> None:
         )
         st.stop()
     _init_session_state()
+    active_role = _active_role()
 
-    with st.sidebar:
-        _render_sidebar_brand()
-        st.markdown('<span class="aa-sidebar-label">Workspace</span>', unsafe_allow_html=True)
-        portal = st.radio(
-            "Workspace",
-            options=["Operations", "Student"],
-            label_visibility="collapsed",
-        )
-        page = "Manager" if portal == "Operations" else "Student"
-        manager_section = None
-        student_section = "Start"
-        if page == "Manager":
-            manager_section = _render_manager_sidebar_navigation(settings, repo)
-        else:
-            student_section = _render_student_sidebar_navigation(settings, repo)
+    if active_role is None:
+        _render_role_home(settings)
+        return
 
-    if page == "Manager":
-        if _render_manager_auth(settings):
-            render_manager_page(
-                repo,
+    if active_role == "Manager":
+        if st.session_state.get("manager_auth") is None:
+            _render_app_shell(
+                "Manager Portal",
                 settings,
-                manager_section or st.session_state.get("manager_section", MANAGER_SECTIONS[0]),
+                badge="ClassPresence",
+                signals=[
+                    ("Date", now_in_app_timezone(settings).strftime("%b %d, %Y")),
+                    ("Timezone", settings.app_timezone),
+                    ("Access", "Protected"),
+                ],
             )
-    else:
-        render_student_page(repo, settings, student_section)
+            back_left, back_right = st.columns([0.2, 1.0], gap="large")
+            with back_left:
+                if st.button("All roles", key="manager_back_home", use_container_width=True):
+                    st.session_state["active_role"] = None
+                    st.rerun()
+            with back_right:
+                st.empty()
+            pad_left, center, pad_right = st.columns([0.25, 1.0, 0.25], gap="large")
+            with center:
+                _render_manager_auth(settings)
+            return
+
+        render_manager_page(
+            repo,
+            settings,
+            st.session_state.get("manager_section", MANAGER_SECTIONS[0]),
+        )
+        return
+
+    render_student_page(
+        repo,
+        settings,
+        st.session_state.get("student_section", "Start"),
+    )
 
 
 def render_manager_page(repo: AttendanceRepository, settings, section: str) -> None:
@@ -1345,48 +1733,57 @@ def render_manager_page(repo: AttendanceRepository, settings, section: str) -> N
         st.success(notice)
 
     courses = _cached_list_courses(settings.database_target)
+    course_options = ["New course", *[str(course["code"]) for course in courses]]
+    _prepare_manager_course_selector(course_options)
+    _normalize_choice_state("manager_section", MANAGER_SECTIONS, MANAGER_SECTIONS[0])
+    section = st.session_state.get("manager_section", section)
+    _render_app_shell(
+        "Manager Portal",
+        settings,
+        badge="ClassPresence",
+        signals=[
+            ("Date", now_in_app_timezone(settings).strftime("%b %d, %Y")),
+            ("Timezone", settings.app_timezone),
+            ("Storage", repo.backend.upper()),
+        ],
+    )
+    with st.container(border=True):
+        nav_col, course_col, action_col = st.columns([1.9, 0.85, 0.35], gap="medium")
+        with nav_col:
+            selected_section = st.pills(
+                "Manager navigation",
+                MANAGER_SECTIONS,
+                key="manager_section",
+                label_visibility="collapsed",
+                width="stretch",
+            )
+            section = selected_section or MANAGER_SECTIONS[0]
+        with course_col:
+            st.selectbox(
+                "Course",
+                options=course_options,
+                key="manager_course_selector",
+            )
+        with action_col:
+            if st.button("Sign out", key="manager_signout", use_container_width=True):
+                st.session_state["manager_auth"] = None
+                st.session_state["active_role"] = "Manager"
+                st.rerun()
+
     selected_course = _selected_manager_course(settings)
     _ensure_course_location_defaults()
     _sync_course_location_state(selected_course)
 
-    titles = {
-        "Today": "Today",
-        "Courses": "Courses",
-        "Students": "Students",
-        "Attendance Log": "Attendance log",
-        "Imports": "Imports",
-        "Reports": "Reports",
-        "Settings": "Settings",
-    }
-    descriptions = {
-        "Today": "Monitor live teaching windows, next sessions opening today, and recent classroom activity across the system.",
-        "Courses": "Manage course records as a working directory, then open one course at a time for setup and schedule maintenance.",
-        "Students": "Review enrolled students across courses in a single directory instead of jumping course by course.",
-        "Attendance Log": "Inspect recent attendance events as raw operational data with course-level filtering.",
-        "Imports": "Handle roster uploads and workbook restores in one operational intake area.",
-        "Reports": "Export the selected course and review diagnostics after the live data is in place.",
-        "Settings": "Review runtime configuration, delivery mode, and basic operational health from one place.",
-    }
     route_tags = [settings.app_timezone, now_in_app_timezone(settings).strftime("%b %d, %Y")]
     if selected_course is not None and section in {"Courses", "Imports", "Reports"}:
         route_tags.append(f"Course {selected_course['code']}")
 
-    header_left, header_right = st.columns([3.0, 1.0], gap="large")
-    with header_left:
-        _render_route_header(
-            "Operations back office",
-            titles[section],
-            descriptions[section],
-            tags=route_tags,
-        )
-    with header_right:
-        st.markdown(
-            f'<div class="aa-user-pill">Instructor {escape(settings.manager_username)}</div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("Sign out", key="manager_signout", use_container_width=True):
-            st.session_state["manager_auth"] = None
-            st.rerun()
+    _render_route_header(
+        "",
+        section,
+        "",
+        tags=route_tags,
+    )
 
     if section == "Today":
         _render_manager_today_view(repo, settings, courses)
@@ -1584,11 +1981,6 @@ def _render_manager_today_view(repo: AttendanceRepository, settings, courses: li
                 )
             else:
                 st.caption("No attendance stamps have been recorded yet today.")
-        _render_note_card(
-            "Operating model",
-            "Treat this page as the daily desk: live windows first, recent attendance second, and deep configuration only when you need it.",
-            tone="info",
-        )
 
 
 def _render_manager_courses_view(
@@ -1636,11 +2028,7 @@ def _render_manager_courses_view(
                     f"Radius {float(selected_course['radius_m']):.1f} m"
                 )
         else:
-            _render_note_card(
-                "New course draft",
-                "You are in create mode. Save the course details first, then continue with timetable maintenance and roster imports from the other sections.",
-                tone="success",
-            )
+            st.info("Create a new course.")
 
     with right:
         form_key = f"course_form_{selected_course['id'] if selected_course is not None else 'new'}"
@@ -1712,7 +2100,7 @@ def _render_manager_courses_view(
         with form_right:
             with st.container(border=True):
                 st.subheader("Classroom location")
-                st.caption("Pin the room once. Every student check-in uses this saved boundary.")
+                st.caption("Save one classroom point for this course.")
                 manager_geo = location_picker(
                     latitude=float(st.session_state["course_latitude"]),
                     longitude=float(st.session_state["course_longitude"]),
@@ -1725,8 +2113,8 @@ def _render_manager_courses_view(
 
         if selected_course is None:
             _render_empty_state(
-                "Save the course to continue",
-                "Once the course exists, this page will show its timetable snapshot and roster preview, while the dedicated imports and reports sections unlock the rest of the workflow.",
+                "Save the course first",
+                "",
             )
             return
 
@@ -1751,7 +2139,7 @@ def _render_manager_courses_view(
                         hide_index=True,
                     )
                 else:
-                    st.caption("No timetable windows are configured yet. Use the dedicated Timetable work in this section by continuing below.")
+                    st.caption("No timetable windows yet.")
                 edited_timetable_rows = st.data_editor(
                     _build_timetable_editor_rows(
                         schedules,
@@ -1816,11 +2204,6 @@ def _render_manager_courses_view(
                         st.caption(f"Showing the first 20 roster records out of {len(students)}.")
                 else:
                     st.caption("No roster has been imported for this course yet.")
-                _render_note_card(
-                    "Next step",
-                    "Use Imports for full roster intake and Reports when you are ready to export the course workbook.",
-                    tone="info",
-                )
 
 
 def _render_manager_students_view(settings, courses: list[dict], selected_course) -> None:
@@ -1923,7 +2306,7 @@ def _render_manager_imports_view(repo: AttendanceRepository, settings, selected_
         with st.container(border=True):
             st.subheader("Roster intake")
             if selected_course is None:
-                st.caption("Select an existing course from the sidebar before replacing its roster.")
+                st.caption("Select a course to replace its roster.")
             else:
                 st.caption(f"Current target course: {selected_course['code']} • {selected_course['title']}")
                 _render_roster_importer(repo, settings, selected_course)
@@ -1932,13 +2315,8 @@ def _render_manager_imports_view(repo: AttendanceRepository, settings, selected_
     with right:
         with st.container(border=True):
             st.subheader("Restore from workbook")
-            st.caption("Upload a previously exported workbook to recreate the course, timetable, roster, and attendance history.")
+            st.caption("Upload a workbook to restore a course.")
             _render_report_restore_uploader(repo, settings, key_suffix="imports_workspace")
-        _render_note_card(
-            "Import strategy",
-            "Use roster replacement for everyday enrollment updates. Use workbook restore only when rebuilding a course from a prior export.",
-            tone="warning",
-        )
 
 
 def _render_manager_report_export_panel(repo: AttendanceRepository, settings, course) -> None:
@@ -1971,8 +2349,8 @@ def _render_manager_report_export_panel(repo: AttendanceRepository, settings, co
 def _render_manager_reports_view(repo: AttendanceRepository, settings, selected_course) -> None:
     if selected_course is None:
         _render_empty_state(
-            "Select a course to export",
-            "Reports are generated per course. Pick a course from the sidebar, then return here to download the workbook and review diagnostics.",
+            "Select a course",
+            "",
         )
         return
 
@@ -1980,12 +2358,11 @@ def _render_manager_reports_view(repo: AttendanceRepository, settings, selected_
     with report_left:
         with st.container(border=True):
             st.subheader("Export")
-            st.caption(f"Generate the workbook for {selected_course['code']} after reviewing the current roster and attendance records.")
+            st.caption(f"Export {selected_course['code']}.")
             _render_manager_report_export_panel(repo, settings, selected_course)
     with report_right:
         with st.container(border=True):
             st.subheader("Course diagnostics")
-            st.caption("Run safe checks on the selected course before exporting or after a restore.")
             _render_diagnostics_panel(repo, settings, selected_course)
 
 
@@ -2012,7 +2389,6 @@ def _render_manager_settings_view(repo: AttendanceRepository, settings, courses:
     with right:
         with st.container(border=True):
             st.subheader("Operational checks")
-            st.caption("This is a lightweight health pass over the configured data sources.")
             if st.button("Run system health check", key="run_system_health_check", use_container_width=True):
                 try:
                     repo.list_courses()
@@ -2023,11 +2399,6 @@ def _render_manager_settings_view(repo: AttendanceRepository, settings, courses:
                     st.success("System health check passed.")
                 except Exception as error:  # pragma: no cover - Streamlit surface
                     st.error(_safe_health_error(error))
-        _render_note_card(
-            "Security note",
-            "This app still uses a single protected instructor account. For a fully production-grade rollout, place the back office behind organization identity and audit controls.",
-            tone="warning",
-        )
 
 
 def _render_manager_overview_tab(
@@ -2192,11 +2563,7 @@ def _render_manager_course_tab(
                 st.error(str(error))
 
     with right:
-        _render_note_card(
-            "Classroom location",
-            "Pin the room on the map and the selected point becomes the center of the attendance boundary used for student access and stamping.",
-            tone="info",
-        )
+        st.caption("Set the classroom location.")
         manager_geo = location_picker(
             latitude=float(st.session_state["course_latitude"]),
             longitude=float(st.session_state["course_longitude"]),
@@ -2206,11 +2573,6 @@ def _render_manager_course_tab(
         )
         _handle_location_capture(manager_geo, prefix="manager")
         _render_location_summary()
-        _render_note_card(
-            "Security reminder",
-            "For public deployments, keep instructor access in secrets and place the app behind a trusted identity layer instead of relying only on a single shared password.",
-            tone="warning",
-        )
 
 
 def _render_manager_timetable_tab(repo: AttendanceRepository, settings, active_course) -> None:
@@ -2364,19 +2726,29 @@ def _render_manager_reports_tab(repo: AttendanceRepository, settings, active_cou
 def render_student_page(repo: AttendanceRepository, settings, section: str) -> None:
     auth = st.session_state.get("student_auth")
 
+    _render_app_shell(
+        "Student Portal" if auth else "Student Check-In",
+        settings,
+        badge="ClassPresence",
+        signals=[
+            ("Date", now_in_app_timezone(settings).strftime("%b %d, %Y")),
+            ("Timezone", settings.app_timezone),
+            ("Code", _otp_mode_label(settings)),
+        ],
+    )
+
     if not auth:
         st.session_state["student_section"] = "Start"
-        _render_route_header(
-            "Student check-in",
-            "Start",
-            "Verify classroom presence, request a one-time code, and sign in before you submit attendance.",
-            tags=[_otp_mode_label(settings), settings.app_timezone],
-        )
-        left, right = st.columns([0.9, 1.15], gap="large")
-        with left:
-            _render_student_step_rail(settings)
-            _render_otp_delivery_notice(settings)
-        with right:
+        back_left, back_right = st.columns([0.2, 1.0], gap="large")
+        with back_left:
+            if st.button("All roles", key="student_back_home", use_container_width=True):
+                st.session_state["active_role"] = None
+                st.rerun()
+        with back_right:
+            st.empty()
+        _render_otp_delivery_notice(settings)
+        pad_left, center, pad_right = st.columns([0.25, 1.0, 0.25], gap="large")
+        with center:
             _render_student_login(repo, settings)
         return
 
@@ -2385,6 +2757,7 @@ def render_student_page(repo: AttendanceRepository, settings, section: str) -> N
     if course is None or student is None:
         st.session_state["student_auth"] = None
         st.session_state["student_section"] = "Start"
+        st.session_state["active_role"] = "Student"
         _reset_student_access_flow(clear_student_id=False)
         st.warning("Your session is no longer valid. Please sign in again.")
         return
@@ -2394,6 +2767,7 @@ def render_student_page(repo: AttendanceRepository, settings, section: str) -> N
     if active_schedule is None:
         st.session_state["student_auth"] = None
         st.session_state["student_section"] = "Start"
+        st.session_state["active_role"] = "Student"
         _reset_student_access_flow(clear_student_id=False)
         st.warning(
             "Student access is available only during the active timetable window. "
@@ -2420,30 +2794,38 @@ def render_student_page(repo: AttendanceRepository, settings, section: str) -> N
         30,
     )
 
-    header_left, header_right = st.columns([2.9, 0.95], gap="large")
-    with header_left:
-        descriptions = {
-            "Check In": "Use this screen during class to capture location and submit attendance before the active window closes.",
-            "Status": "Review attendance standing, absence exposure, and eligibility without leaving the student app.",
-            "History": "Review your recent attendance records and confirm what has already been stamped.",
-        }
-        _render_route_header(
-            "Student check-in app",
-            section,
-            descriptions.get(section, descriptions["Check In"]),
-            tags=[course["code"], active_schedule["label"], settings.app_timezone],
-        )
-    with header_right:
-        st.markdown(
-            f'<div class="aa-user-pill">{escape(student["full_name"])}</div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("Sign out", key="student_signout", use_container_width=True):
-            st.session_state["student_auth"] = None
-            st.session_state["student_section"] = "Start"
-            _reset_student_access_flow(clear_student_id=False)
-            _clear_cached_database_reads()
-            st.rerun()
+    _normalize_choice_state("student_section", STUDENT_SECTIONS, STUDENT_SECTIONS[0])
+    section = st.session_state.get("student_section", section)
+    with st.container(border=True):
+        nav_col, meta_col, action_col = st.columns([1.8, 0.9, 0.35], gap="medium")
+        with nav_col:
+            selected_section = st.pills(
+                "Student navigation",
+                STUDENT_SECTIONS,
+                key="student_section",
+                label_visibility="collapsed",
+                width="stretch",
+            )
+            section = selected_section or STUDENT_SECTIONS[0]
+        with meta_col:
+            st.markdown(
+                f'<div class="aa-user-pill">{escape(course["code"])} · {escape(student["full_name"])}</div>',
+                unsafe_allow_html=True,
+            )
+        with action_col:
+            if st.button("Sign out", key="student_signout", use_container_width=True):
+                st.session_state["student_auth"] = None
+                st.session_state["student_section"] = "Start"
+                st.session_state["active_role"] = "Student"
+                _reset_student_access_flow(clear_student_id=False)
+                _clear_cached_database_reads()
+                st.rerun()
+    _render_route_header(
+        "",
+        section,
+        "",
+        tags=[course["code"], active_schedule["label"], settings.app_timezone],
+    )
 
     metrics = st.columns(4)
     metrics[0].metric("Attended", summary.attended_count)
@@ -2565,11 +2947,6 @@ def _render_student_check_in_workspace(
                 """,
                 unsafe_allow_html=True,
             )
-        _render_note_card(
-            "Check-in rule",
-            "Attendance is accepted only while this course window is active and your reported location is inside the saved classroom boundary.",
-            tone="info",
-        )
 
 
 def _render_student_status_workspace(summary, course, settings, active_schedule) -> None:
@@ -2817,10 +3194,7 @@ def _render_student_status_tab(summary, course, settings, active_schedule) -> No
 
 def _render_student_login(repo: AttendanceRepository, settings) -> None:
     with st.container(border=True):
-        st.subheader("1. Verify classroom access")
-        st.write(
-            "Enter your student ID and share your current location. Access works only during a live class window and only inside the saved classroom boundary."
-        )
+        st.subheader("Access")
         university_id = st.text_input(
             "Student ID",
             value=st.session_state.get("pending_university_id", ""),
@@ -2846,12 +3220,7 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
         )
         return
 
-    st.success(
-        f"Access verified for {access_context['student_name']}. You are "
-        f"{access_context['distance_m']:.2f} m from class and inside "
-        f"{access_context['schedule_label']} "
-        f"({access_context['schedule_start_time']} - {access_context['schedule_end_time']})."
-    )
+    st.success(f"Verified: {access_context['student_name']}")
     access_cols = st.columns(3)
     access_cols[0].metric("Course", access_context["course_code"])
     access_cols[1].metric("Window", access_context["schedule_label"])
@@ -2859,13 +3228,11 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
     st.caption(access_context["course_title"])
 
     with st.container(border=True):
-        st.subheader("2. Request one-time code")
+        st.subheader("One-time code")
         if settings.otp_delivery_mode == "console":
-            st.write("Generate a code and use the latest value shown on this page.")
-            otp_button_label = "Generate code"
+            otp_button_label = "Show code"
         else:
-            st.write("Generate a code and check the email address saved on your roster.")
-            otp_button_label = "Generate code via email"
+            otp_button_label = "Send code"
 
         configuration_error = otp_delivery_configuration_error(settings)
         if configuration_error:
@@ -2895,8 +3262,7 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
             st.markdown(
                 f"""
                 <div class="aa-otp-card">
-                    <h3>Latest code</h3>
-                    <p>Use this code in the login form below before it expires.</p>
+                    <h3>Code</h3>
                     <div class="aa-otp-code">{escape(str(otp_preview_code))}</div>
                 </div>
                 """,
@@ -2907,8 +3273,7 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
         return
 
     with st.container(border=True):
-        st.subheader("3. Log in")
-        st.write(_otp_entry_help_text(settings))
+        st.subheader("Sign in")
         with st.form("student_otp_login_form"):
             otp_code = st.text_input(
                 "One-time code",
@@ -2931,6 +3296,7 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
                     "student_id": int(student["id"]),
                 }
                 st.session_state["student_section"] = "Check In"
+                st.session_state["active_role"] = "Student"
                 st.session_state["student_stamp_result"] = None
                 st.session_state["student_stamp_geolocation"] = None
                 st.session_state["student_otp_notice"] = None
@@ -3294,11 +3660,8 @@ def _prepare_manager_course_selector(course_options: list[str]) -> None:
 
 
 def _render_report_restore_uploader(repo: AttendanceRepository, settings, *, key_suffix: str) -> None:
-    st.markdown('<p class="aa-subsection">📥 Restore From Report</p>', unsafe_allow_html=True)
-    st.caption(
-        "Upload a previously exported attendance report workbook to restore a course, roster, "
-        "timetable, and attendance history into the current database."
-    )
+    st.markdown('<p class="aa-subsection">Restore workbook</p>', unsafe_allow_html=True)
+    st.caption("Upload a report workbook.")
     restore_file = st.file_uploader(
         "Attendance report workbook",
         type=["xlsx"],
@@ -3336,36 +3699,25 @@ def _render_manager_auth(settings) -> bool:
     if st.session_state.get("manager_auth") is not None:
         return True
 
-    st.markdown(
-        """
-        <div class="aa-signin-card">
-            <span class="aa-kicker">Protected access</span>
-            <h2>Instructor sign in</h2>
-            <p>Only the authorized academic operator can configure courses, update rosters, and export reports.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     if not settings.manager_username or not settings.manager_password_hash:
-        st.error(
-            "Instructor credentials are not configured. Set `MANAGER_USERNAME` and "
-            "`MANAGER_PASSWORD_HASH` in Streamlit secrets before using the instructor portal."
-        )
+        st.error("Manager credentials are not configured.")
         return False
 
-    with st.form("manager_login_form"):
-        username = st.text_input("Username", placeholder="Enter your username")
-        password = st.text_input("Password", type="password", placeholder="Enter your password")
-        submit = st.form_submit_button("Sign in →", use_container_width=True)
+    with st.container(border=True):
+        st.subheader("Manager sign in")
+        with st.form("manager_login_form"):
+            username = st.text_input("Username", placeholder="Username")
+            password = st.text_input("Password", type="password", placeholder="Password")
+            submit = st.form_submit_button("Enter", use_container_width=True)
     if submit:
         if (
             username.strip() == settings.manager_username
             and verify_password(password, settings.manager_password_hash)
         ):
             st.session_state["manager_auth"] = {"username": settings.manager_username}
+            st.session_state["active_role"] = "Manager"
             st.rerun()
-        st.error("Incorrect username or password. Please try again.")
+        st.error("Incorrect username or password.")
     return False
 
 
@@ -3373,13 +3725,6 @@ def _render_otp_delivery_notice(settings) -> None:
     configuration_error = otp_delivery_configuration_error(settings)
     if configuration_error:
         _render_note_card("Delivery setup needs attention", configuration_error, tone="warning")
-        return
-    if settings.otp_delivery_mode == "console":
-        _render_note_card(
-            "Development shortcut",
-            "Console OTP mode is active, so students see the latest login code inside the app during testing.",
-            tone="info",
-        )
 
 
 def _otp_entry_help_text(settings) -> str:
@@ -3615,11 +3960,7 @@ def _render_course_summary(repo: AttendanceRepository, settings, course) -> None
 
 def _render_location_summary() -> None:
     if not _has_course_location_selection():
-        _render_note_card(
-            "No classroom location selected yet",
-            "Choose a point on the map or use your device location before saving the course.",
-            tone="warning",
-        )
+        st.warning("Select a classroom location.")
         return
 
     latitude = float(st.session_state["course_latitude"])
@@ -3627,7 +3968,6 @@ def _render_location_summary() -> None:
     col1, col2 = st.columns(2)
     col1.metric("Latitude", f"{latitude:.6f}")
     col2.metric("Longitude", f"{longitude:.6f}")
-    st.caption("This classroom point is saved with the course and enforced for student access.")
 
 
 def _handle_student_access_gate(student_geo, repo: AttendanceRepository, settings, university_id: str) -> None:
@@ -3771,6 +4111,7 @@ def _has_course_location_selection() -> bool:
 
 
 def _init_session_state() -> None:
+    st.session_state.setdefault("active_role", None)
     st.session_state.setdefault("manager_auth", None)
     st.session_state.setdefault("manager_section", MANAGER_SECTIONS[0])
     st.session_state.setdefault("student_auth", None)
