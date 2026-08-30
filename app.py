@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from html import escape
 
 import streamlit as st
 
@@ -28,674 +29,756 @@ from attendance_app.utils import parse_hhmm, parse_iso_date, weekday_label
 
 APP_CSS = """
 <style>
-    /* ── Global ── */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
+    :root {
+        --aa-bg: #f4f7fb;
+        --aa-bg-glow: rgba(71, 85, 105, 0.08);
+        --aa-surface: rgba(255, 255, 255, 0.88);
+        --aa-surface-solid: #ffffff;
+        --aa-surface-muted: #eef3f9;
+        --aa-border: #d8e1ef;
+        --aa-border-strong: #b9c6da;
+        --aa-text: #162033;
+        --aa-text-soft: #5a6b87;
+        --aa-text-muted: #74839c;
+        --aa-accent: #1d4ed8;
+        --aa-accent-soft: #dbeafe;
+        --aa-sidebar-top: #0f172a;
+        --aa-sidebar-bottom: #16213a;
+        --aa-success: #0f766e;
+        --aa-success-soft: #dff7f2;
+        --aa-warning: #b45309;
+        --aa-warning-soft: #fff1d6;
+        --aa-danger: #b42318;
+        --aa-danger-soft: #fde7e7;
+        --aa-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+        --aa-radius-xl: 24px;
+        --aa-radius-lg: 18px;
+        --aa-radius-md: 14px;
+        --aa-radius-sm: 10px;
+    }
 
     html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: var(--aa-text);
     }
 
     .stApp {
-        background: #f0f4f3;
+        background:
+            radial-gradient(circle at top left, rgba(29, 78, 216, 0.10), transparent 26%),
+            radial-gradient(circle at top right, rgba(15, 118, 110, 0.08), transparent 22%),
+            linear-gradient(180deg, #f8fbff 0%, var(--aa-bg) 100%);
     }
 
-    /* ── Sidebar ── */
+    .block-container {
+        max-width: 1280px;
+        padding-top: 2.1rem;
+        padding-bottom: 3rem;
+    }
+
+    header[data-testid="stHeader"] {
+        background: rgba(248, 251, 255, 0.82);
+        border-bottom: 1px solid rgba(216, 225, 239, 0.8);
+        backdrop-filter: blur(10px);
+    }
+
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0d3d35 0%, #0f4f45 100%);
-        border-right: none;
+        background: linear-gradient(180deg, var(--aa-sidebar-top) 0%, var(--aa-sidebar-bottom) 100%);
+        border-right: 1px solid rgba(255, 255, 255, 0.06);
     }
+
     [data-testid="stSidebar"] * {
-        color: #e2f0ee !important;
+        color: #e7edf8 !important;
     }
+
     [data-testid="stSidebar"] .stRadio label {
-        color: #b2ccc8 !important;
+        color: #b8c4da !important;
     }
+
+    [data-testid="stSidebar"] [data-baseweb="radio"] {
+        background: transparent !important;
+    }
+
     [data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] ~ div {
         color: #ffffff !important;
-    }
-    [data-testid="stSidebar"] .stCaption {
-        color: #7aada6 !important;
+        font-weight: 700 !important;
     }
 
-    /* ── App header bar ── */
-    header[data-testid="stHeader"] {
-        background: rgba(240, 244, 243, 0.95);
-        backdrop-filter: blur(8px);
-        border-bottom: 1px solid #d1e4e0;
+    .aa-sidebar-brand {
+        padding: 0.4rem 0 1.3rem 0;
     }
 
-    /* ── Hero banner ── */
-    .aa-hero {
-        display: flex;
-        align-items: center;
-        gap: 1.2rem;
-        padding: 1.4rem 1.8rem;
-        border-radius: 16px;
-        background: linear-gradient(135deg, #0d3d35 0%, #0f766e 100%);
-        margin-bottom: 1.5rem;
-        box-shadow: 0 4px 24px rgba(15, 118, 110, 0.18);
-    }
-    .aa-hero-icon {
-        font-size: 2.4rem;
-        line-height: 1;
-        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
-    }
-    .aa-hero-text h1 {
-        margin: 0;
-        font-size: 1.9rem;
-        font-weight: 700;
-        color: #ffffff;
-        letter-spacing: -0.02em;
-    }
-    .aa-hero-text p {
-        margin: 0.25rem 0 0 0;
-        color: rgba(255,255,255,0.75);
-        font-size: 0.9rem;
-        font-weight: 400;
-    }
-
-    /* ── Section headings ── */
-    .aa-section-header {
-        display: flex;
-        align-items: center;
-        gap: 0.6rem;
-        padding: 0.9rem 1.2rem;
-        border-radius: 12px;
-        background: #ffffff;
-        border-left: 4px solid #0f766e;
-        margin-bottom: 1.2rem;
-        box-shadow: 0 1px 6px rgba(0,0,0,0.06);
-    }
-    .aa-section-header .aa-sh-icon {
-        font-size: 1.4rem;
-    }
-    .aa-section-header .aa-sh-body h2 {
-        margin: 0;
+    .aa-sidebar-brand strong {
+        display: block;
         font-size: 1.15rem;
-        font-weight: 700;
-        color: #0d3d35;
-    }
-    .aa-section-header .aa-sh-body p {
-        margin: 0.15rem 0 0 0;
-        font-size: 0.82rem;
-        color: #4a7a71;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        color: #ffffff;
     }
 
-    /* ── User pill (signed-in label) ── */
+    .aa-sidebar-brand span {
+        display: block;
+        margin-top: 0.3rem;
+        font-size: 0.78rem;
+        line-height: 1.55;
+        color: #a7b6d1;
+    }
+
+    .aa-sidebar-card {
+        margin-top: 1rem;
+        padding: 1rem 1rem 0.95rem;
+        border-radius: 16px;
+        background: rgba(148, 163, 184, 0.10);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+    }
+
+    .aa-sidebar-card strong {
+        display: block;
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #c9d4e8;
+        margin-bottom: 0.7rem;
+    }
+
+    .aa-sidebar-card span {
+        display: block;
+        font-size: 0.83rem;
+        color: #f8fbff;
+        font-weight: 600;
+        line-height: 1.55;
+        margin-top: 0.22rem;
+    }
+
+    .aa-sidebar-card em {
+        display: block;
+        margin-top: 0.8rem;
+        font-style: normal;
+        font-size: 0.78rem;
+        line-height: 1.55;
+        color: #b8c4da;
+    }
+
+    .aa-shell {
+        display: flex;
+        justify-content: space-between;
+        gap: 1.5rem;
+        align-items: flex-start;
+        padding: 1.6rem 1.8rem;
+        border-radius: var(--aa-radius-xl);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        background:
+            linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(243, 247, 255, 0.94));
+        box-shadow: var(--aa-shadow);
+        margin-bottom: 1.5rem;
+    }
+
+    .aa-shell-copy h1 {
+        margin: 0.25rem 0 0 0;
+        font-size: 2.1rem;
+        line-height: 1.05;
+        letter-spacing: -0.05em;
+        color: var(--aa-text);
+    }
+
+    .aa-shell-copy p {
+        max-width: 44rem;
+        margin: 0.7rem 0 0 0;
+        font-size: 0.98rem;
+        line-height: 1.65;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.28rem 0.78rem;
+        border-radius: 999px;
+        border: 1px solid rgba(29, 78, 216, 0.10);
+        background: rgba(29, 78, 216, 0.08);
+        color: var(--aa-accent);
+        font-size: 0.74rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .aa-shell-meta {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(150px, 1fr));
+        gap: 0.8rem;
+        width: min(460px, 100%);
+    }
+
+    .aa-meta-chip {
+        padding: 0.95rem 1rem;
+        border-radius: 16px;
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        background: rgba(255, 255, 255, 0.78);
+    }
+
+    .aa-meta-chip span {
+        display: block;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--aa-text-muted);
+        margin-bottom: 0.38rem;
+    }
+
+    .aa-meta-chip strong {
+        display: block;
+        font-size: 0.92rem;
+        line-height: 1.4;
+        color: var(--aa-text);
+        font-weight: 700;
+    }
+
+    .aa-page-intro {
+        padding: 1.3rem 1.35rem;
+        margin-bottom: 1rem;
+        border-radius: var(--aa-radius-lg);
+        border: 1px solid rgba(216, 225, 239, 0.92);
+        background: rgba(255, 255, 255, 0.84);
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    }
+
+    .aa-page-intro h2,
+    .aa-surface h3,
+    .aa-signin-card h2,
+    .aa-student-hero h2 {
+        margin: 0.3rem 0 0 0;
+        font-size: 1.35rem;
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+        color: var(--aa-text);
+    }
+
+    .aa-page-intro p,
+    .aa-surface p,
+    .aa-signin-card p,
+    .aa-student-hero p {
+        margin: 0.55rem 0 0 0;
+        font-size: 0.92rem;
+        line-height: 1.65;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-toolbar {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.8rem;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+
     .aa-user-pill {
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
-        background: #e6f4f1;
-        border: 1px solid #b0d8d2;
+        padding: 0.45rem 0.9rem;
         border-radius: 999px;
-        padding: 0.3rem 0.85rem;
+        background: rgba(29, 78, 216, 0.08);
+        border: 1px solid rgba(29, 78, 216, 0.12);
+        color: var(--aa-accent);
         font-size: 0.83rem;
-        font-weight: 600;
-        color: #0d3d35;
+        font-weight: 700;
     }
 
-    /* ── Info / step cards ── */
-    .portal-card {
-        padding: 1.1rem 1.3rem;
-        border-radius: 14px;
-        border: 1px solid #d1e4e0;
-        background: #ffffff;
-        margin-bottom: 1rem;
-        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
+    .aa-surface,
+    .aa-signin-card,
+    .portal-card,
+    .aa-info-card,
+    .aa-progress-card,
+    .aa-status-card {
+        padding: 1.2rem 1.25rem;
+        border-radius: var(--aa-radius-lg);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        background: rgba(255, 255, 255, 0.90);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
     }
-    .portal-card h3 {
-        margin: 0 0 0.3rem 0;
+
+    .aa-surface-muted {
+        background: linear-gradient(180deg, rgba(246, 249, 253, 0.92), rgba(255, 255, 255, 0.90));
+    }
+
+    .aa-empty-state {
+        padding: 1.35rem 1.4rem;
+        border-radius: var(--aa-radius-lg);
+        border: 1px dashed var(--aa-border-strong);
+        background: rgba(255, 255, 255, 0.72);
+        margin-bottom: 1rem;
+    }
+
+    .aa-empty-state strong {
+        display: block;
         font-size: 1rem;
-        font-weight: 700;
-        color: #0d3d35;
-    }
-    .portal-card p {
-        margin: 0;
-        color: #4a7a71;
-        font-size: 0.88rem;
-        line-height: 1.55;
-    }
-    .portal-kicker {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        margin: 0 0 0.5rem 0;
-        background: #e6f4f1;
-        border-radius: 999px;
-        padding: 0.15rem 0.65rem;
-        color: #0f766e;
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
+        color: var(--aa-text);
+        margin-bottom: 0.35rem;
     }
 
-    /* ── Step badge cards ── */
-    .aa-step-card {
+    .aa-empty-state span {
+        display: block;
+        max-width: 42rem;
+        font-size: 0.9rem;
+        line-height: 1.65;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-course-banner,
+    .aa-status-banner {
         display: flex;
-        gap: 1rem;
+        justify-content: space-between;
         align-items: flex-start;
-        padding: 1.1rem 1.3rem;
-        border-radius: 14px;
-        border: 1px solid #d1e4e0;
-        background: #ffffff;
+        gap: 1rem;
+        padding: 1.25rem 1.35rem;
+        border-radius: var(--aa-radius-lg);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(239, 246, 255, 0.92));
         margin-bottom: 1rem;
-        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
-    }
-    .aa-step-badge {
-        flex-shrink: 0;
-        width: 2rem;
-        height: 2rem;
-        border-radius: 50%;
-        background: linear-gradient(135deg, #0f766e, #0d9488);
-        color: #fff;
-        font-size: 0.85rem;
-        font-weight: 700;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 2px 6px rgba(15,118,110,0.25);
-    }
-    .aa-step-body h3 {
-        margin: 0 0 0.2rem 0;
-        font-size: 0.98rem;
-        font-weight: 700;
-        color: #0d3d35;
-    }
-    .aa-step-body p {
-        margin: 0;
-        font-size: 0.85rem;
-        color: #4a7a71;
-        line-height: 1.5;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
     }
 
-    /* ── Student portal hero ── */
-    .aa-student-hero-card {
+    .aa-course-banner h3,
+    .aa-status-banner h3 {
+        margin: 0.35rem 0 0 0;
+        font-size: 1.15rem;
+        color: var(--aa-text);
+        letter-spacing: -0.02em;
+    }
+
+    .aa-course-banner p,
+    .aa-status-banner p {
+        margin: 0.4rem 0 0 0;
+        font-size: 0.9rem;
+        line-height: 1.55;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-banner-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        justify-content: flex-end;
+    }
+
+    .aa-banner-tag {
+        padding: 0.42rem 0.72rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        color: var(--aa-text-soft);
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .aa-student-hero {
         position: relative;
         overflow: hidden;
-        padding: 1.45rem 1.5rem;
-        border-radius: 22px;
-        background: linear-gradient(135deg, #0b3a33 0%, #116b61 58%, #18a089 100%);
-        margin-bottom: 1rem;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: 0 20px 44px rgba(11, 58, 51, 0.2);
+        padding: 1.5rem 1.55rem;
+        border-radius: var(--aa-radius-xl);
+        border: 1px solid rgba(30, 64, 175, 0.14);
+        background: linear-gradient(140deg, #172554 0%, #1d4ed8 58%, #0f766e 100%);
+        color: #ffffff;
+        box-shadow: 0 18px 40px rgba(23, 37, 84, 0.18);
     }
-    .aa-student-hero-card::after {
+
+    .aa-student-hero::after {
         content: "";
         position: absolute;
-        width: 260px;
-        height: 260px;
-        right: -90px;
-        bottom: -120px;
+        width: 280px;
+        height: 280px;
+        right: -100px;
+        top: -130px;
         border-radius: 50%;
-        background: radial-gradient(circle, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 70%);
+        background: radial-gradient(circle, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 72%);
     }
-    .aa-student-hero-card > * {
+
+    .aa-student-hero > * {
         position: relative;
         z-index: 1;
     }
-    .aa-student-kicker {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
-        margin: 0 0 0.8rem 0;
-        padding: 0.22rem 0.72rem;
-        border-radius: 999px;
+
+    .aa-student-hero .aa-kicker {
         background: rgba(255, 255, 255, 0.14);
-        color: #f6fffd;
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
+        border-color: rgba(255, 255, 255, 0.18);
+        color: #eff6ff;
     }
-    .aa-student-hero-card h2 {
-        margin: 0;
+
+    .aa-student-hero h2,
+    .aa-student-hero p {
         color: #ffffff;
-        font-size: 1.75rem;
-        font-weight: 800;
-        letter-spacing: -0.03em;
     }
-    .aa-student-hero-card p {
-        margin: 0.45rem 0 0 0;
-        max-width: 42rem;
-        color: rgba(245, 255, 252, 0.86);
-        font-size: 0.92rem;
-        line-height: 1.6;
+
+    .aa-student-hero p {
+        max-width: 44rem;
+        color: rgba(239, 246, 255, 0.84);
     }
-    .aa-student-badge-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.55rem;
-        margin-top: 1rem;
-    }
-    .aa-student-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 0.36rem 0.78rem;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.14);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #ffffff;
-        font-size: 0.79rem;
-        font-weight: 600;
-    }
-    .aa-student-facts {
+
+    .aa-student-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
-        gap: 0.75rem;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.7rem;
         margin-top: 1rem;
     }
-    .aa-student-fact {
-        padding: 0.85rem 0.95rem;
+
+    .aa-student-grid div {
+        padding: 0.8rem 0.9rem;
         border-radius: 14px;
         background: rgba(255, 255, 255, 0.12);
-        border: 1px solid rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(255, 255, 255, 0.16);
         backdrop-filter: blur(6px);
     }
-    .aa-student-fact .aa-sf-label {
+
+    .aa-student-grid span {
         display: block;
-        color: rgba(237, 252, 248, 0.72);
-        font-size: 0.7rem;
-        font-weight: 700;
+        font-size: 0.68rem;
         letter-spacing: 0.08em;
         text-transform: uppercase;
+        color: rgba(224, 231, 255, 0.82);
+        font-weight: 800;
         margin-bottom: 0.35rem;
     }
-    .aa-student-fact .aa-sf-value {
+
+    .aa-student-grid strong {
         display: block;
+        font-size: 0.93rem;
+        line-height: 1.45;
         color: #ffffff;
-        font-size: 0.94rem;
-        font-weight: 700;
-        line-height: 1.35;
     }
 
-    /* ── Sign-in card ── */
-    .aa-signin-card {
-        max-width: 420px;
-        margin: 1rem auto;
-        padding: 2rem 2rem 1.5rem;
-        border-radius: 20px;
-        background: #ffffff;
-        border: 1px solid #d1e4e0;
-        box-shadow: 0 8px 32px rgba(15, 118, 110, 0.10);
-    }
-    .aa-signin-card h2 {
-        margin: 0 0 0.3rem 0;
-        font-size: 1.3rem;
-        font-weight: 700;
-        color: #0d3d35;
-    }
-    .aa-signin-card p {
-        margin: 0 0 1.4rem 0;
-        font-size: 0.87rem;
-        color: #4a7a71;
-    }
-
-    /* ── Attendance status banner ── */
-    .aa-window-banner {
-        display: flex;
-        align-items: center;
-        gap: 0.7rem;
-        padding: 0.85rem 1.2rem;
-        border-radius: 12px;
-        background: linear-gradient(90deg, #ecfdf5, #d1fae5);
-        border: 1px solid #6ee7b7;
-        margin-bottom: 1rem;
-        font-size: 0.92rem;
-        font-weight: 600;
-        color: #065f46;
-    }
-    .aa-window-banner .aa-wb-icon { font-size: 1.2rem; }
-
-    /* ── Student info card ── */
-    .aa-student-info {
-        padding: 1rem 1.3rem;
-        border-radius: 14px;
-        background: #ffffff;
-        border: 1px solid #d1e4e0;
-        margin-bottom: 1rem;
-        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
-    }
-    .aa-student-info .aa-si-name {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #0d3d35;
-        margin: 0 0 0.2rem 0;
-    }
-    .aa-student-info .aa-si-meta {
-        font-size: 0.84rem;
-        color: #4a7a71;
-        margin: 0;
-    }
-    .aa-student-info code {
-        background: #e6f4f1;
-        padding: 0.1rem 0.4rem;
-        border-radius: 4px;
-        font-size: 0.82rem;
-        color: #0d3d35;
-    }
-
-    /* ── Supporting student cards ── */
-    .aa-info-card {
-        padding: 1.15rem 1.25rem;
-        border-radius: 16px;
-        border: 1px solid #d1e4e0;
-        background: #ffffff;
-        margin-bottom: 1rem;
-        box-shadow: 0 2px 10px rgba(15, 118, 110, 0.07);
-    }
-    .aa-info-card h3 {
-        margin: 0;
-        font-size: 1rem;
-        font-weight: 700;
-        color: #0d3d35;
-    }
-    .aa-info-card p {
-        margin: 0.35rem 0 0 0;
-        color: #4a7a71;
-        font-size: 0.87rem;
-        line-height: 1.55;
-    }
+    .aa-list,
+    .aa-rule-list,
     .aa-checklist {
         list-style: none;
         padding: 0;
         margin: 0.9rem 0 0 0;
         display: grid;
-        gap: 0.65rem;
+        gap: 0.7rem;
     }
+
+    .aa-list li,
+    .aa-rule-list li,
     .aa-checklist li {
         position: relative;
-        padding-left: 1.45rem;
-        color: #285148;
-        font-size: 0.86rem;
-        line-height: 1.45;
+        padding-left: 1.3rem;
+        font-size: 0.88rem;
+        line-height: 1.55;
+        color: var(--aa-text-soft);
     }
+
+    .aa-list li::before,
+    .aa-rule-list li::before,
     .aa-checklist li::before {
-        content: "•";
+        content: "";
         position: absolute;
         left: 0;
-        top: -0.08rem;
-        color: #0f766e;
-        font-size: 1.15rem;
-        font-weight: 700;
+        top: 0.45rem;
+        width: 0.45rem;
+        height: 0.45rem;
+        border-radius: 50%;
+        background: var(--aa-accent);
+        box-shadow: 0 0 0 4px rgba(29, 78, 216, 0.10);
     }
+
     .aa-detail-list {
         display: grid;
         gap: 0.75rem;
-        margin-top: 0.95rem;
+        margin-top: 0.9rem;
     }
+
     .aa-detail-row {
         display: flex;
         justify-content: space-between;
-        align-items: flex-start;
         gap: 0.9rem;
         padding-bottom: 0.75rem;
-        border-bottom: 1px solid #e3efec;
+        border-bottom: 1px solid rgba(216, 225, 239, 0.9);
     }
+
     .aa-detail-row:last-child {
         border-bottom: none;
         padding-bottom: 0;
     }
+
     .aa-detail-row .aa-label {
-        color: #65857d;
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.07em;
+        color: var(--aa-text-muted);
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
     }
+
     .aa-detail-row .aa-value {
-        color: #0d3d35;
-        font-size: 0.86rem;
+        color: var(--aa-text);
+        font-size: 0.87rem;
         font-weight: 700;
         line-height: 1.45;
         text-align: right;
     }
-    .aa-callout {
-        display: flex;
-        gap: 0.8rem;
-        align-items: flex-start;
-        padding: 1rem 1.1rem;
-        border-radius: 15px;
-        border: 1px solid #d1e4e0;
-        margin: 0.9rem 0 1rem 0;
+
+    .aa-signin-card {
+        max-width: 460px;
+        margin: 1rem auto 1.2rem auto;
+        padding: 2rem 2rem 1.5rem;
     }
-    .aa-callout.aa-callout-success {
-        background: linear-gradient(90deg, #ecfdf5, #f6fffb);
-        border-color: #9adebf;
-    }
-    .aa-callout.aa-callout-info {
-        background: linear-gradient(90deg, #eef8f6, #ffffff);
-        border-color: #b8ddd6;
-    }
-    .aa-callout.aa-callout-warning {
-        background: linear-gradient(90deg, #fff7ed, #ffffff);
-        border-color: #fdba74;
-    }
-    .aa-callout .aa-callout-icon {
-        flex-shrink: 0;
-        font-size: 1.15rem;
-        line-height: 1;
-    }
-    .aa-callout strong {
-        display: block;
-        color: #0d3d35;
-        font-size: 0.92rem;
-        margin-bottom: 0.2rem;
-    }
-    .aa-callout span {
-        display: block;
-        color: #4a7a71;
-        font-size: 0.85rem;
-        line-height: 1.5;
-    }
-    .aa-otp-card {
-        padding: 1rem 1.1rem 1.1rem;
+
+    .aa-note-card {
+        padding: 1rem 1.05rem;
         border-radius: 16px;
-        border: 1px solid #b8ddd6;
-        background: linear-gradient(145deg, #eef8f6, #ffffff);
-        margin: 0.9rem 0 1rem 0;
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        margin-bottom: 1rem;
+        background: rgba(255, 255, 255, 0.86);
     }
+
+    .aa-note-card strong {
+        display: block;
+        font-size: 0.9rem;
+        color: var(--aa-text);
+        margin-bottom: 0.25rem;
+    }
+
+    .aa-note-card span {
+        display: block;
+        font-size: 0.85rem;
+        line-height: 1.55;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-note-card.success {
+        background: linear-gradient(180deg, rgba(223, 247, 242, 0.82), rgba(255, 255, 255, 0.90));
+        border-color: rgba(15, 118, 110, 0.22);
+    }
+
+    .aa-note-card.warning {
+        background: linear-gradient(180deg, rgba(255, 241, 214, 0.88), rgba(255, 255, 255, 0.92));
+        border-color: rgba(180, 83, 9, 0.22);
+    }
+
+    .aa-note-card.info {
+        background: linear-gradient(180deg, rgba(219, 234, 254, 0.70), rgba(255, 255, 255, 0.92));
+        border-color: rgba(29, 78, 216, 0.18);
+    }
+
+    .aa-otp-card {
+        padding: 1rem 1.05rem 1.1rem;
+        border-radius: 16px;
+        border: 1px solid rgba(29, 78, 216, 0.16);
+        background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.94));
+        margin: 0.95rem 0 1rem 0;
+    }
+
     .aa-otp-card h3 {
         margin: 0;
-        font-size: 1rem;
-        font-weight: 700;
-        color: #0d3d35;
+        font-size: 0.98rem;
+        color: var(--aa-text);
     }
+
     .aa-otp-card p {
         margin: 0.35rem 0 0 0;
-        color: #4a7a71;
-        font-size: 0.85rem;
-        line-height: 1.5;
+        font-size: 0.84rem;
+        line-height: 1.55;
+        color: var(--aa-text-soft);
     }
+
     .aa-otp-code {
         display: inline-block;
-        margin-top: 0.8rem;
-        padding: 0.55rem 0.9rem;
-        border-radius: 12px;
-        background: #ffffff;
-        border: 1px solid #cde6e0;
-        color: #0d3d35;
+        margin-top: 0.85rem;
+        padding: 0.6rem 0.95rem;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid rgba(29, 78, 216, 0.14);
+        color: var(--aa-text);
         font-family: 'SFMono-Regular', 'Menlo', 'Monaco', monospace;
-        font-size: 1.45rem;
+        font-size: 1.35rem;
         font-weight: 800;
-        letter-spacing: 0.2em;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+        letter-spacing: 0.18em;
     }
-    .aa-progress-card,
-    .aa-status-card {
-        padding: 1.15rem 1.25rem;
-        border-radius: 16px;
-        border: 1px solid #d1e4e0;
-        background: #ffffff;
-        box-shadow: 0 2px 10px rgba(15, 118, 110, 0.07);
-        height: 100%;
-    }
-    .aa-progress-card h3,
-    .aa-status-card h3 {
-        margin: 0;
-        font-size: 1.1rem;
-        font-weight: 800;
-        color: #0d3d35;
-    }
-    .aa-progress-card p,
-    .aa-status-card p {
-        margin: 0.35rem 0 0 0;
-        color: #4a7a71;
-        font-size: 0.86rem;
-        line-height: 1.55;
-    }
-    .aa-progress-track {
-        width: 100%;
-        height: 0.7rem;
-        border-radius: 999px;
-        background: #e6f4f1;
-        overflow: hidden;
-        margin: 0.95rem 0 0.7rem 0;
-    }
-    .aa-progress-fill {
-        height: 100%;
-        border-radius: 999px;
-        background: linear-gradient(90deg, #0f766e, #14b8a6);
-    }
-    .aa-progress-meta {
-        display: flex;
-        justify-content: space-between;
-        gap: 0.75rem;
-        flex-wrap: wrap;
-        color: #4a7a71;
-        font-size: 0.8rem;
-        font-weight: 600;
-    }
+
     .aa-status-pill {
         display: inline-flex;
         align-items: center;
         gap: 0.35rem;
-        margin-bottom: 0.8rem;
-        padding: 0.34rem 0.74rem;
+        padding: 0.35rem 0.74rem;
         border-radius: 999px;
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-    }
-    .aa-status-pill.aa-good {
-        background: #e8fbf3;
-        color: #047857;
-    }
-    .aa-status-pill.aa-risk {
-        background: #fff1f2;
-        color: #be123c;
-    }
-
-    /* ── Divider ── */
-    .aa-divider {
-        height: 1px;
-        background: linear-gradient(90deg, transparent, #d1e4e0, transparent);
-        margin: 1.5rem 0;
-    }
-
-    /* ── Override Streamlit metric ── */
-    [data-testid="metric-container"] {
-        background: #ffffff;
-        border: 1px solid #d1e4e0;
-        border-radius: 12px;
-        padding: 0.8rem 1rem !important;
-        box-shadow: 0 2px 6px rgba(15, 118, 110, 0.06);
-    }
-    [data-testid="metric-container"] [data-testid="stMetricLabel"] {
-        font-size: 0.75rem !important;
-        font-weight: 600 !important;
-        color: #4a7a71 !important;
-        text-transform: uppercase;
+        font-size: 0.76rem;
+        font-weight: 800;
         letter-spacing: 0.05em;
-    }
-    [data-testid="metric-container"] [data-testid="stMetricValue"] {
-        font-size: 1.5rem !important;
-        font-weight: 700 !important;
-        color: #0d3d35 !important;
+        text-transform: uppercase;
+        margin-bottom: 0.75rem;
     }
 
-    /* ── Override Streamlit tabs ── */
-    [data-testid="stTabs"] [data-baseweb="tab-list"] {
-        gap: 0.25rem;
-        background: #e6f4f1;
-        padding: 0.3rem;
-        border-radius: 10px;
-    }
-    [data-testid="stTabs"] [data-baseweb="tab"] {
-        border-radius: 8px;
-        font-weight: 600;
-        font-size: 0.87rem;
-        padding: 0.45rem 1rem;
-    }
-    [data-testid="stTabs"] [aria-selected="true"] {
-        background: #0f766e !important;
-        color: #fff !important;
+    .aa-status-pill.aa-good {
+        background: var(--aa-success-soft);
+        color: var(--aa-success);
     }
 
-    /* ── Override Streamlit buttons ── */
-    .stButton > button {
-        border-radius: 10px;
-        font-weight: 600;
-        font-size: 0.9rem;
-        padding: 0.5rem 1.2rem;
-        transition: all 0.15s ease;
-    }
-    .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(15, 118, 110, 0.2);
+    .aa-status-pill.aa-risk {
+        background: var(--aa-danger-soft);
+        color: var(--aa-danger);
     }
 
-    /* ── Selectbox and inputs ── */
-    [data-baseweb="select"] {
-        border-radius: 10px !important;
-    }
-    [data-baseweb="input"] {
-        border-radius: 10px !important;
-    }
-
-    /* ── Download button ── */
-    .stDownloadButton > button {
-        border-radius: 10px;
-        font-weight: 600;
+    .aa-progress-track {
+        width: 100%;
+        height: 0.72rem;
+        border-radius: 999px;
+        overflow: hidden;
+        background: #e5edf9;
+        margin: 0.95rem 0 0.75rem 0;
     }
 
-    /* ── Form container ── */
-    [data-testid="stForm"] {
-        background: #ffffff;
-        border: 1px solid #d1e4e0;
-        border-radius: 14px;
-        padding: 1.2rem 1.2rem 0.8rem;
-        box-shadow: 0 2px 8px rgba(15, 118, 110, 0.06);
+    .aa-progress-fill {
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--aa-accent), #0f766e);
     }
 
-    /* ── Roster / report section title ── */
-    .aa-subsection {
-        font-size: 0.78rem;
+    .aa-progress-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.7rem;
+        flex-wrap: wrap;
+        font-size: 0.8rem;
+        color: var(--aa-text-soft);
         font-weight: 700;
+    }
+
+    .aa-subsection {
+        font-size: 0.77rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--aa-accent);
+        margin: 1.1rem 0 0.6rem 0;
+    }
+
+    [data-testid="metric-container"] {
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        border-radius: 16px;
+        padding: 0.95rem 1rem !important;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+    }
+
+    [data-testid="metric-container"] [data-testid="stMetricLabel"] {
+        color: var(--aa-text-muted) !important;
+        font-size: 0.74rem !important;
+        font-weight: 800 !important;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #0f766e;
-        margin: 1.2rem 0 0.6rem 0;
     }
 
-    @media (max-width: 900px) {
-        .aa-student-hero-card {
-            padding: 1.2rem 1.1rem;
+    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+        color: var(--aa-text) !important;
+        font-size: 1.45rem !important;
+        font-weight: 800 !important;
+        letter-spacing: -0.03em;
+    }
+
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        gap: 0.45rem;
+        padding: 0.35rem;
+        border-radius: 16px;
+        background: rgba(230, 238, 250, 0.9);
+        border: 1px solid rgba(216, 225, 239, 0.92);
+    }
+
+    [data-testid="stTabs"] [data-baseweb="tab"] {
+        min-height: 42px;
+        border-radius: 12px;
+        padding: 0.5rem 0.95rem;
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: var(--aa-text-soft);
+    }
+
+    [data-testid="stTabs"] [aria-selected="true"] {
+        background: rgba(255, 255, 255, 0.95) !important;
+        color: var(--aa-text) !important;
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+    }
+
+    .stButton > button,
+    .stDownloadButton > button,
+    div[data-testid="stFormSubmitButton"] > button {
+        border-radius: 12px;
+        min-height: 42px;
+        border: 1px solid rgba(29, 78, 216, 0.14);
+        font-weight: 700;
+        font-size: 0.9rem;
+        transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+    }
+
+    .stButton > button:hover,
+    .stDownloadButton > button:hover,
+    div[data-testid="stFormSubmitButton"] > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 18px rgba(29, 78, 216, 0.12);
+        border-color: rgba(29, 78, 216, 0.22);
+    }
+
+    [data-baseweb="input"],
+    [data-baseweb="select"],
+    [data-baseweb="base-input"] {
+        border-radius: 12px !important;
+    }
+
+    [data-testid="stForm"],
+    [data-testid="stVerticalBlockBorderWrapper"],
+    [data-testid="stExpander"] {
+        border-radius: 18px !important;
+        border-color: rgba(216, 225, 239, 0.95) !important;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+    }
+
+    [data-testid="stFileUploader"],
+    [data-testid="stDataFrame"],
+    [data-testid="stDataEditor"] {
+        border-radius: 16px;
+    }
+
+    [data-testid="stMarkdownContainer"] code {
+        color: #0f172a;
+        background: rgba(226, 232, 240, 0.65);
+        border-radius: 6px;
+        padding: 0.12rem 0.34rem;
+    }
+
+    @media (max-width: 980px) {
+        .aa-shell,
+        .aa-course-banner,
+        .aa-status-banner {
+            flex-direction: column;
         }
-        .aa-student-hero-card h2 {
-            font-size: 1.45rem;
+
+        .aa-shell-meta {
+            grid-template-columns: 1fr;
+            width: 100%;
         }
+
+        .aa-banner-tags {
+            justify-content: flex-start;
+        }
+
+        .aa-student-grid {
+            grid-template-columns: 1fr;
+        }
+
         .aa-detail-row {
             flex-direction: column;
         }
+
         .aa-detail-row .aa-value {
             text-align: left;
         }
+
         .aa-otp-code {
-            font-size: 1.2rem;
-            letter-spacing: 0.16em;
+            font-size: 1.18rem;
+            letter-spacing: 0.15em;
         }
     }
 </style>
@@ -795,8 +878,124 @@ def _clear_cached_database_reads() -> None:
     _cached_count_attendance_by_student_for_course.clear()
 
 
+def _otp_mode_label(settings) -> str:
+    if settings.otp_delivery_mode == "email":
+        return "Roster email"
+    return "On-page code"
+
+
+def _render_shell_header(page: str, settings, repo: AttendanceRepository) -> None:
+    workspace_label = "Operations workspace" if page == "Manager" else "Student workspace"
+    storage_label = "PostgreSQL" if repo.backend == "postgres" else "SQLite"
+    st.markdown(
+        f"""
+        <section class="aa-shell">
+            <div class="aa-shell-copy">
+                <span class="aa-kicker">{escape(workspace_label)}</span>
+                <h1>AttendancApp</h1>
+                <p>
+                    A focused attendance workspace for course setup, live classroom check-in,
+                    roster control, and export-ready reporting.
+                </p>
+            </div>
+            <div class="aa-shell-meta">
+                <div class="aa-meta-chip">
+                    <span>Timezone</span>
+                    <strong>{escape(settings.app_timezone)}</strong>
+                </div>
+                <div class="aa-meta-chip">
+                    <span>Student Access</span>
+                    <strong>{escape(_otp_mode_label(settings))}</strong>
+                </div>
+                <div class="aa-meta-chip">
+                    <span>Data Store</span>
+                    <strong>{escape(storage_label)}</strong>
+                </div>
+            </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_page_intro(kicker: str, title: str, description: str) -> None:
+    st.markdown(
+        f"""
+        <section class="aa-page-intro">
+            <span class="aa-kicker">{escape(kicker)}</span>
+            <h2>{escape(title)}</h2>
+            <p>{escape(description)}</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_empty_state(title: str, description: str) -> None:
+    st.markdown(
+        f"""
+        <div class="aa-empty-state">
+            <strong>{escape(title)}</strong>
+            <span>{escape(description)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_note_card(title: str, description: str, *, tone: str = "info") -> None:
+    st.markdown(
+        f"""
+        <div class="aa-note-card {escape(tone)}">
+            <strong>{escape(title)}</strong>
+            <span>{escape(description)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_sidebar(page: str, settings, repo: AttendanceRepository) -> None:
+    student_copy = (
+        "Students authenticate with a one-time code sent to their roster email."
+        if settings.otp_delivery_mode == "email"
+        else "Students authenticate with a one-time code shown inside the app."
+    )
+    portal_copy = (
+        "Manage courses, classroom boundaries, rosters, and reports from a calmer operations workspace."
+        if page == "Manager"
+        else "Guide students through location verification, one-time access, and live attendance stamping."
+    )
+    storage_label = "Persistent hosted database" if repo.backend == "postgres" else "Local SQLite file"
+    st.markdown(
+        """
+        <div class="aa-sidebar-brand">
+            <strong>AttendancApp</strong>
+            <span>Attendance operations for instructors and students, with room to breathe.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="aa-sidebar-card">
+            <strong>Workspace</strong>
+            <span>{escape(portal_copy)}</span>
+            <em>{escape(student_copy if page == "Student" else storage_label)}</em>
+        </div>
+        <div class="aa-sidebar-card">
+            <strong>Runtime</strong>
+            <span>Timezone: {escape(settings.app_timezone)}</span>
+            <span>OTP mode: {escape(_otp_mode_label(settings))}</span>
+            <span>Storage: {escape(storage_label)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
-    st.set_page_config(page_title="AttendancApp", layout="wide")
+    st.set_page_config(page_title="AttendancApp", page_icon="A", layout="wide")
     st.markdown(APP_CSS, unsafe_allow_html=True)
 
     settings = load_settings(_safe_secrets())
@@ -814,60 +1013,16 @@ def main() -> None:
         st.stop()
     _init_session_state()
 
-    st.markdown(
-        f"""
-        <div class="aa-hero">
-            <div class="aa-hero-icon">🎓</div>
-            <div class="aa-hero-text">
-                <h1>AttendancApp</h1>
-                <p>Geofenced course attendance — manager controls, roster-linked student access,
-                {_otp_workflow_label(settings)}, and Excel reporting.</p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     with st.sidebar:
-        st.markdown(
-            """
-            <div style="padding: 0.5rem 0 1.2rem 0;">
-                <div style="font-size:1.3rem; font-weight:800; letter-spacing:-0.02em; color:#ffffff;">
-                    AttendancApp
-                </div>
-                <div style="font-size:0.75rem; color:#7aada6; margin-top:0.2rem;">
-                    Academic Attendance Platform
-                </div>
-            </div>
-            <div style="height:1px; background:rgba(255,255,255,0.1); margin-bottom:1.2rem;"></div>
-            <div style="font-size:0.72rem; font-weight:700; letter-spacing:0.08em;
-                        text-transform:uppercase; color:#7aada6; margin-bottom:0.5rem;">
-                Portal
-            </div>
-            """,
-            unsafe_allow_html=True,
+        portal = st.radio(
+            "Portal",
+            options=["Operations", "Student"],
+            label_visibility="collapsed",
         )
-        page = st.radio("Open", options=["👨‍🏫  Instructor", "🎒  Student"], label_visibility="collapsed")
-        page = "Manager" if "Instructor" in page else "Student"
-        st.markdown(
-            f"""
-            <div style="height:1px; background:rgba(255,255,255,0.1); margin:1.2rem 0 0.8rem 0;"></div>
-            <div style="font-size:0.75rem; color:#7aada6;">
-                🕐 Timezone<br>
-                <span style="color:#b2ccc8; font-weight:600;">{settings.app_timezone}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if page == "Student":
-            st.markdown(
-                f"""
-                <div style="margin-top:0.8rem; font-size:0.75rem; color:#7aada6; line-height:1.5;">
-                    {_student_sidebar_otp_text(settings)}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+        page = "Manager" if portal == "Operations" else "Student"
+        _render_sidebar(page, settings, repo)
+
+    _render_shell_header(page, settings, repo)
 
     if page == "Manager":
         if _render_manager_auth(settings):
@@ -877,42 +1032,39 @@ def main() -> None:
 
 
 def render_manager_page(repo: AttendanceRepository, settings) -> None:
-    st.markdown(
-        """
-        <div class="aa-section-header">
-            <div class="aa-sh-icon">🖥️</div>
-            <div class="aa-sh-body">
-                <h2>Instructor Console</h2>
-                <p>Configure courses, set classroom boundaries, manage rosters, and export reports.</p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     notice = st.session_state.pop("manager_notice", None)
     if notice:
         st.success(notice)
 
-    top_left, top_right = st.columns([2.6, 1.0])
+    _render_page_intro(
+        "Operations console",
+        "Run courses without the clutter",
+        "Use separate workspaces for setup, timetable control, roster imports, and reporting so each job has its own place.",
+    )
+
+    top_left, top_right = st.columns([2.3, 1.0], gap="large")
+    courses = _cached_list_courses(settings.database_target)
+    course_options = ["New course", *[str(course["code"]) for course in courses]]
+    _prepare_manager_course_selector(course_options)
     with top_left:
         st.markdown(
-            f'<div class="aa-user-pill">👤 {settings.manager_username}</div>',
+            '<p class="aa-subsection">Course workspace</p>',
             unsafe_allow_html=True,
         )
+        selected_code = st.selectbox(
+            "Working course",
+            options=course_options,
+            key="manager_course_selector",
+        )
     with top_right:
+        st.markdown(
+            f'<div class="aa-user-pill">Signed in as {escape(settings.manager_username)}</div>',
+            unsafe_allow_html=True,
+        )
         if st.button("Sign out", use_container_width=True):
             st.session_state["manager_auth"] = None
             st.rerun()
 
-    courses = _cached_list_courses(settings.database_target)
-    course_options = ["New course", *[str(course["code"]) for course in courses]]
-    _prepare_manager_course_selector(course_options)
-    selected_code = st.selectbox(
-        "Course to set up",
-        options=course_options,
-        key="manager_course_selector",
-    )
     selected_course = (
         _cached_get_course_by_code(settings.database_target, selected_code)
         if selected_code != "New course"
@@ -1028,23 +1180,111 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
         )
 
     active_course = selected_course
-    if active_course is None and code.strip():
-        active_course = _cached_get_course_by_code(settings.database_target, code.strip().upper())
+
+    if active_course is not None:
+        _render_course_summary(repo, settings, active_course)
+    else:
+        _render_empty_state(
+            "No course selected yet",
+            "Create a new course or restore one from an exported workbook to unlock timetable, roster, and reporting workspaces.",
+        )
+
+    overview_tab, course_tab, timetable_tab, roster_tab, reports_tab = st.tabs(
+        ["Overview", "Course Setup", "Timetable", "Roster", "Reports"]
+    )
+
+    with overview_tab:
+        _render_manager_overview_tab(repo, settings, courses, active_course)
+    with course_tab:
+        _render_manager_course_tab(
+            repo,
+            settings,
+            selected_course,
+            selected_start_date,
+            selected_end_date,
+            selected_radius,
+            selected_absence_limit,
+        )
+    with timetable_tab:
+        _render_manager_timetable_tab(repo, settings, active_course)
+    with roster_tab:
+        _render_manager_roster_tab(repo, settings, active_course)
+    with reports_tab:
+        _render_manager_reports_tab(repo, settings, active_course)
+
+
+def _render_manager_overview_tab(
+    repo: AttendanceRepository,
+    settings,
+    courses: list[dict],
+    active_course,
+) -> None:
+    _render_page_intro(
+        "Overview",
+        "See the course at a glance",
+        "This workspace keeps the selected course healthy while the detailed work happens in the dedicated setup, timetable, roster, and reports screens.",
+    )
 
     if active_course is None:
-        st.info("Save a course first to configure timetable, sync the roster, and export reports.")
-        _render_report_restore_uploader(repo, settings, key_suffix="bootstrap")
+        _render_empty_state(
+            "Start with a course",
+            "Use Course Setup to create one from scratch, or restore a previously exported workbook below.",
+        )
+        _render_report_restore_uploader(repo, settings, key_suffix="overview_bootstrap")
         return
 
-    _render_course_summary(repo, settings, active_course)
+    recent_attendance = _cached_list_course_attendance(
+        settings.database_target,
+        int(active_course["id"]),
+        12,
+    )
+    left, right = st.columns([1.3, 1.0], gap="large")
 
-    if settings.app_env == "development":
-        helper_left, helper_right = st.columns([1.2, 1.0], gap="large")
-        with helper_left:
+    with left:
+        with st.container(border=True):
+            st.subheader("Course snapshot")
             st.caption(
-                "Testing helper: create an attendance window that opens immediately for this course."
+                f"{active_course['code']} • {active_course['title']} • "
+                f"{active_course['start_date']} to {active_course['end_date']}"
             )
-        with helper_right:
+            _render_location_summary()
+
+        with st.container(border=True):
+            st.subheader("Recent attendance activity")
+            if recent_attendance:
+                st.dataframe(
+                    [
+                        {
+                            "Date": row["attendance_date"],
+                            "Student": row["full_name"],
+                            "Window": row["schedule_label"],
+                            "Stamped At": row["stamped_at"],
+                        }
+                        for row in recent_attendance
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption("No attendance stamps have been recorded for this course yet.")
+
+    with right:
+        _render_note_card(
+            "Recommended flow",
+            "Keep course details current first, then maintain the timetable, import the roster, and only export reports after the live data looks healthy.",
+            tone="success",
+        )
+        _render_note_card(
+            "Reporting workspace",
+            "The Reports workspace now groups export, restore, and diagnostics so operational checks live in one place instead of interrupting setup.",
+            tone="info",
+        )
+        if settings.app_env == "development":
+            _render_note_card(
+                "Development helper",
+                "Need a quick end-to-end test? Create a live class window for the selected course and verify the student flow right away.",
+                tone="warning",
+            )
             if st.button("Create live test window now", use_container_width=True):
                 _create_live_test_window(
                     repo=repo,
@@ -1052,71 +1292,185 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
                     course_id=int(active_course["id"]),
                 )
 
-    setup_tab, roster_tab, reports_tab = st.tabs(["📅  Timetable", "👥  Roster", "📊  Reports"])
+        st.metric("Courses in system", len(courses))
+        st.metric("Environment", settings.app_env.capitalize())
 
-    with setup_tab:
-        st.markdown('<p class="aa-subsection">🗓️ Weekly Timetable</p>', unsafe_allow_html=True)
-        schedules = _cached_list_schedules_for_course(settings.database_target, int(active_course["id"]))
-        st.caption(
-            "Saved timetable rows are shown below. Add rows directly in the table, or load the "
-            "standard L1-L7 templates when you want to rebuild the weekly grid."
-        )
-        st.caption(
-            "Tick `Remove` and save to remove a row. Removing a saved row may delete linked "
-            "attendance records for that window."
-        )
-        timetable_rows = _build_timetable_editor_rows(
-            schedules,
-            show_default_rows=_should_show_default_timetable_rows(
-                int(active_course["id"]),
-                schedules,
-            ),
-        )
-        edited_timetable_rows = st.data_editor(
-            timetable_rows,
-            key=_timetable_editor_key(int(active_course["id"])),
-            hide_index=True,
-            num_rows="dynamic",
+
+def _render_manager_course_tab(
+    repo: AttendanceRepository,
+    settings,
+    selected_course,
+    selected_start_date: date,
+    selected_end_date: date,
+    selected_radius: float,
+    selected_absence_limit: float,
+) -> None:
+    _render_page_intro(
+        "Course setup",
+        "Define the academic container",
+        "Save the course profile, classroom radius, and map-based geofence here. Once this is stable, the other workspaces stay cleaner.",
+    )
+
+    left, right = st.columns([1.15, 1.0], gap="large")
+    with left:
+        st.markdown('<p class="aa-subsection">Course profile</p>', unsafe_allow_html=True)
+        with st.form("course_form", clear_on_submit=False):
+            code = st.text_input(
+                "Course code",
+                value=str(selected_course["code"]) if selected_course is not None else "",
+                placeholder="MAT1116",
+            )
+            title = st.text_input(
+                "Course name",
+                value=str(selected_course["title"]) if selected_course is not None else "",
+                placeholder="Foundations of Mathematics",
+            )
+            start_date = st.date_input("Course start date", value=selected_start_date)
+            end_date = st.date_input("Course end date", value=selected_end_date)
+            radius_m = st.number_input(
+                "Allowed attendance radius (meters)",
+                min_value=1.0,
+                value=selected_radius,
+                step=0.5,
+            )
+            absence_limit_pct = st.number_input(
+                "Absence limit (%)",
+                min_value=1.0,
+                max_value=100.0,
+                value=selected_absence_limit,
+                step=1.0,
+            )
+            submit_course = st.form_submit_button("Save course", use_container_width=True)
+
+        if submit_course:
+            _save_course(
+                repo=repo,
+                settings=settings,
+                code=code,
+                title=title,
+                start_date=start_date,
+                end_date=end_date,
+                radius_m=float(radius_m),
+                absence_limit_pct=float(absence_limit_pct),
+                existing_course_id=int(selected_course["id"]) if selected_course is not None else None,
+            )
+
+        if settings.app_env == "development" and st.button(
+            "Seed demo course MAT1116",
             use_container_width=True,
-            column_order=[
-                "label",
-                "start_time",
-                "end_time",
-                "Sunday",
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "remove",
-            ],
-            column_config={
-                "label": st.column_config.TextColumn(
-                    "Slot",
-                    help="Examples: L1, L2, Lab, Tutorial",
-                    required=False,
-                ),
-                "start_time": st.column_config.TextColumn(
-                    "Start",
-                    help="Use 24-hour format like 07:30",
-                    required=False,
-                ),
-                "end_time": st.column_config.TextColumn(
-                    "End",
-                    help="Use 24-hour format like 08:20",
-                    required=False,
-                ),
-                "Sunday": st.column_config.CheckboxColumn("Sunday"),
-                "Monday": st.column_config.CheckboxColumn("Monday"),
-                "Tuesday": st.column_config.CheckboxColumn("Tuesday"),
-                "Wednesday": st.column_config.CheckboxColumn("Wednesday"),
-                "Thursday": st.column_config.CheckboxColumn("Thursday"),
-                "remove": st.column_config.CheckboxColumn(
-                    "Remove",
-                    help="Tick this row and save timetable to remove it.",
-                    default=False,
-                ),
-            },
+        ):
+            try:
+                created = seed_demo_data(
+                    repo,
+                    settings,
+                    latitude=float(st.session_state["course_latitude"]),
+                    longitude=float(st.session_state["course_longitude"]),
+                )
+                _clear_cached_database_reads()
+                if created:
+                    st.success("MAT1116 demo data added successfully.")
+                else:
+                    st.info("MAT1116 already exists in the database.")
+            except Exception as error:  # pragma: no cover - Streamlit surface
+                st.error(str(error))
+
+    with right:
+        _render_note_card(
+            "Classroom location",
+            "Pin the room on the map and the selected point becomes the center of the attendance boundary used for student access and stamping.",
+            tone="info",
         )
+        manager_geo = location_picker(
+            latitude=float(st.session_state["course_latitude"]),
+            longitude=float(st.session_state["course_longitude"]),
+            radius_m=float(selected_course["radius_m"]) if selected_course is not None else 3.0,
+            has_selection=_has_course_location_selection(),
+            key="manager_location_picker",
+        )
+        _handle_location_capture(manager_geo, prefix="manager")
+        _render_location_summary()
+        _render_note_card(
+            "Security reminder",
+            "For public deployments, keep instructor access in secrets and place the app behind a trusted identity layer instead of relying only on a single shared password.",
+            tone="warning",
+        )
+
+
+def _render_manager_timetable_tab(repo: AttendanceRepository, settings, active_course) -> None:
+    _render_page_intro(
+        "Timetable",
+        "Control when attendance is live",
+        "Students can request access and stamp attendance only during active timetable windows, so this workspace becomes the live control center.",
+    )
+
+    if active_course is None:
+        _render_empty_state(
+            "A saved course is required",
+            "Create or select a course in Course Setup before you manage live attendance windows here.",
+        )
+        return
+
+    schedules = _cached_list_schedules_for_course(settings.database_target, int(active_course["id"]))
+    _render_note_card(
+        "Editing rules",
+        "Build or revise timetable rows in the grid below. Rows marked for removal are deleted on save, and linked attendance for removed windows may be affected.",
+        tone="info",
+    )
+
+    timetable_rows = _build_timetable_editor_rows(
+        schedules,
+        show_default_rows=_should_show_default_timetable_rows(
+            int(active_course["id"]),
+            schedules,
+        ),
+    )
+    edited_timetable_rows = st.data_editor(
+        timetable_rows,
+        key=_timetable_editor_key(int(active_course["id"])),
+        hide_index=True,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_order=[
+            "label",
+            "start_time",
+            "end_time",
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "remove",
+        ],
+        column_config={
+            "label": st.column_config.TextColumn(
+                "Slot",
+                help="Examples: L1, L2, Lab, Tutorial",
+                required=False,
+            ),
+            "start_time": st.column_config.TextColumn(
+                "Start",
+                help="Use 24-hour format like 07:30",
+                required=False,
+            ),
+            "end_time": st.column_config.TextColumn(
+                "End",
+                help="Use 24-hour format like 08:20",
+                required=False,
+            ),
+            "Sunday": st.column_config.CheckboxColumn("Sunday"),
+            "Monday": st.column_config.CheckboxColumn("Monday"),
+            "Tuesday": st.column_config.CheckboxColumn("Tuesday"),
+            "Wednesday": st.column_config.CheckboxColumn("Wednesday"),
+            "Thursday": st.column_config.CheckboxColumn("Thursday"),
+            "remove": st.column_config.CheckboxColumn(
+                "Remove",
+                help="Tick this row and save timetable to remove it.",
+                default=False,
+            ),
+        },
+    )
+    action_left, action_right = st.columns(2, gap="large")
+    with action_left:
         if st.button("Save timetable", use_container_width=True):
             _save_timetable(
                 repo=repo,
@@ -1124,21 +1478,37 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
                 course_id=int(active_course["id"]),
                 edited_rows=edited_timetable_rows,
             )
+    with action_right:
         if st.button("Load standard L1-L7 templates", use_container_width=True):
             _show_default_timetable_rows(int(active_course["id"]))
             _bump_timetable_editor_version(int(active_course["id"]))
             st.session_state["manager_notice"] = "Standard L1-L7 templates are visible in the editor."
             st.rerun()
 
-    with roster_tab:
-        st.markdown('<p class="aa-subsection">📤 Import Roster</p>', unsafe_allow_html=True)
-        st.caption(
-            "Upload a `.xlsx` or `.csv` file with columns: `student id`, `student name`, `email`. "
-            "The uploaded file replaces the entire roster for this course."
-        )
-        _render_roster_importer(repo, settings, active_course)
 
-        students = _cached_list_students_for_course(settings.database_target, int(active_course["id"]))
+def _render_manager_roster_tab(repo: AttendanceRepository, settings, active_course) -> None:
+    _render_page_intro(
+        "Roster",
+        "Keep the enrolled students accurate",
+        "This workspace is only for the class list. Upload a clean roster and review the active student records without timetable or reporting noise around it.",
+    )
+
+    if active_course is None:
+        _render_empty_state(
+            "A saved course is required",
+            "Create or select a course first, then import the class roster for that course here.",
+        )
+        return
+
+    st.markdown('<p class="aa-subsection">Roster import</p>', unsafe_allow_html=True)
+    st.caption(
+        "Upload a `.xlsx` or `.csv` file with columns: `student id`, `student name`, `email`. The uploaded file replaces the entire roster for this course."
+    )
+    _render_roster_importer(repo, settings, active_course)
+
+    students = _cached_list_students_for_course(settings.database_target, int(active_course["id"]))
+    with st.container(border=True):
+        st.subheader("Active students")
         if students:
             st.dataframe(
                 [
@@ -1155,18 +1525,40 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
         else:
             st.caption("No students are currently linked to this course roster.")
 
-    with reports_tab:
-        _render_report_downloads(repo, settings, active_course)
+
+def _render_manager_reports_tab(repo: AttendanceRepository, settings, active_course) -> None:
+    _render_page_intro(
+        "Reports",
+        "Export, restore, and verify the course",
+        "Operational exports, workbook restores, and safe health checks now live together so the reporting workflow feels like a finishing step instead of an interruption.",
+    )
+
+    if active_course is None:
+        _render_empty_state(
+            "Nothing to report yet",
+            "Select a saved course to export a report, or restore a course from a workbook below.",
+        )
+        _render_report_restore_uploader(repo, settings, key_suffix="reports_bootstrap")
+        return
+
+    _render_report_downloads(repo, settings, active_course)
 
 
 def render_student_page(repo: AttendanceRepository, settings) -> None:
     auth = st.session_state.get("student_auth")
-    st.title("Student Portal")
+    _render_page_intro(
+        "Student portal",
+        "Check in with a clear guided flow",
+        "Students verify classroom presence, request a one-time code, stamp attendance, and review standing without digging through a dashboard.",
+    )
 
     if not auth:
-        _render_student_portal_intro(settings)
-        _render_otp_delivery_notice(settings)
-        _render_student_login(repo, settings)
+        intro_left, flow_right = st.columns([0.95, 1.15], gap="large")
+        with intro_left:
+            _render_student_portal_intro(settings)
+            _render_otp_delivery_notice(settings)
+        with flow_right:
+            _render_student_login(repo, settings)
         return
 
     course = _cached_get_course(settings.database_target, int(auth["course_id"]))
@@ -1201,110 +1593,197 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
         ),
     )
 
-    top_left, top_right = st.columns([2.6, 0.9], gap="large")
+    top_left, top_right = st.columns([2.35, 0.85], gap="large")
     with top_left:
-        st.subheader(course["title"])
-        st.caption(
-            f"{course['code']} • {student['full_name']} • Student ID {student['university_id']}"
+        st.markdown(
+            f"""
+            <section class="aa-student-hero">
+                <span class="aa-kicker">Active class session</span>
+                <h2>{escape(course["title"])}</h2>
+                <p>
+                    {escape(course["code"])} • {escape(student["full_name"])} •
+                    Student ID {escape(str(student["university_id"]))}
+                </p>
+                <div class="aa-student-grid">
+                    <div>
+                        <span>Open window</span>
+                        <strong>{escape(active_schedule["label"])} · {escape(active_schedule["start_time"])} - {escape(active_schedule["end_time"])}</strong>
+                    </div>
+                    <div>
+                        <span>Classroom radius</span>
+                        <strong>{float(course["radius_m"]):.1f} m</strong>
+                    </div>
+                    <div>
+                        <span>Absence limit</span>
+                        <strong>{float(course["absence_limit_pct"]):.0f}%</strong>
+                    </div>
+                </div>
+            </section>
+            """,
+            unsafe_allow_html=True,
         )
     with top_right:
+        st.markdown(
+            f'<div class="aa-user-pill">Signed in as {escape(student["full_name"])}</div>',
+            unsafe_allow_html=True,
+        )
         if st.button("Sign out", use_container_width=True):
             st.session_state["student_auth"] = None
             _reset_student_access_flow(clear_student_id=False)
             _clear_cached_database_reads()
             st.rerun()
 
-    st.success(
-        f"Attendance window open: {active_schedule['label']} "
-        f"({active_schedule['start_time']} - {active_schedule['end_time']})"
+    st.markdown(
+        f"""
+        <div class="aa-status-banner">
+            <div>
+                <span class="aa-kicker">Attendance open</span>
+                <h3>{escape(active_schedule["label"])} is live right now</h3>
+                <p>
+                    Submit your attendance while the window remains open between
+                    {escape(active_schedule["start_time"])} and {escape(active_schedule["end_time"])}.
+                </p>
+            </div>
+            <div class="aa-banner-tags">
+                <span class="aa-banner-tag">{escape(settings.app_timezone)}</span>
+                <span class="aa-banner-tag">Course {escape(course["code"])}</span>
+                <span class="aa-banner-tag">Radius {float(course["radius_m"]):.1f} m</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    overview_cols = st.columns(3)
-    overview_cols[0].metric("Classroom radius", f"{float(course['radius_m']):.1f} m")
-    overview_cols[1].metric("Timezone", settings.app_timezone)
-    overview_cols[2].metric("Absence limit", f"{float(course['absence_limit_pct']):.0f}%")
-
-    with st.container(border=True):
-        st.subheader("Stamp attendance")
-        st.write(
-            "Share your current classroom location, then submit the stamp while this class window is open."
-        )
-        student_stamp_geo = geo_capture(
-            button_label="Share current location to stamp attendance",
-            key="student_stamp_geo_capture",
-        )
-        _handle_student_stamp_gate(student_stamp_geo)
-        if st.session_state.get("student_stamp_geolocation") is not None:
-            st.info(
-                "Location captured. Submit your attendance stamp while this class window is still open."
-            )
-
-        if (
-            st.session_state.get("student_stamp_result") is None
-            and st.session_state.get("student_stamp_geolocation") is not None
-            and st.button("Stamp current attendance", use_container_width=True)
-        ):
-            result = stamp_attendance(
-                repo,
-                settings,
-                course=course,
-                student=student,
-                geolocation_payload=st.session_state["student_stamp_geolocation"],
-            )
-            st.session_state["student_stamp_result"] = {
-                "success": result.success,
-                "message": result.message,
-            }
-            if result.success:
-                st.session_state["student_stamp_geolocation"] = None
-                _clear_cached_database_reads()
-            st.rerun()
-
-        stamp_result = st.session_state.get("student_stamp_result")
-        if stamp_result:
-            if stamp_result["success"]:
-                st.success(stamp_result["message"])
-            else:
-                st.error(stamp_result["message"])
-
-    st.subheader("Attendance summary")
     metrics = st.columns(4)
     metrics[0].metric("Attended", summary.attended_count)
     metrics[1].metric("Absences", summary.absences)
     metrics[2].metric("Meetings elapsed", summary.elapsed_meetings)
     metrics[3].metric("Total meetings", summary.total_meetings)
 
-    with st.container(border=True):
-        st.subheader("Exam standing")
-        if summary.denied_exam_entry:
-            st.error("Exam entry is currently denied because you reached the absence threshold.")
-        else:
-            st.success(
-                f"You are still eligible for exam entry. Safe absences remaining: {summary.remaining_safe_absences}."
-            )
-        st.progress(
-            int(round(max(0.0, min(summary.attendance_pct_of_total, 100.0)))),
-            text=f"Attendance recorded: {summary.attendance_pct_of_total:.1f}% of total meetings",
-        )
-        st.caption(
-            f"Absence threshold: {summary.absence_threshold} meetings • "
-            f"Absence exposure: {summary.absence_pct_of_total:.1f}% of total meetings"
-        )
-
-    with st.expander("Session details", expanded=False):
-        detail_cols = st.columns(2)
-        detail_cols[0].write(f"**Active window:** {active_schedule['label']}")
-        detail_cols[0].write(
-            f"**Time:** {active_schedule['start_time']} - {active_schedule['end_time']}"
-        )
-        detail_cols[1].write(f"**Classroom radius:** {float(course['radius_m']):.1f} m")
-        detail_cols[1].write(f"**Timezone:** {settings.app_timezone}")
-
     recent_records = _cached_list_attendance(
         settings.database_target,
         int(course["id"]),
         int(student["id"]),
         30,
+    )
+    checkin_tab, attendance_tab, status_tab = st.tabs(["Check In", "Attendance", "Standing"])
+
+    with checkin_tab:
+        _render_student_checkin_tab(
+            repo,
+            settings,
+            course,
+            student,
+            active_schedule,
+        )
+    with attendance_tab:
+        _render_student_attendance_tab(recent_records)
+    with status_tab:
+        _render_student_status_tab(summary, course, settings, active_schedule)
+
+
+def _render_student_checkin_tab(
+    repo: AttendanceRepository,
+    settings,
+    course,
+    student,
+    active_schedule,
+) -> None:
+    _render_page_intro(
+        "Check in",
+        "Stamp attendance while the window is active",
+        "Capture your classroom location first, then submit the stamp before the current time window closes.",
+    )
+    left, right = st.columns([1.25, 0.9], gap="large")
+
+    with left:
+        with st.container(border=True):
+            st.subheader("Live attendance stamp")
+            st.write(
+                "Share your current classroom location, then submit the attendance stamp while this class window is open."
+            )
+            student_stamp_geo = geo_capture(
+                button_label="Share current location to stamp attendance",
+                key="student_stamp_geo_capture",
+            )
+            _handle_student_stamp_gate(student_stamp_geo)
+            if st.session_state.get("student_stamp_geolocation") is not None:
+                st.info(
+                    "Location captured. Submit your attendance stamp while this class window is still open."
+                )
+
+            if (
+                st.session_state.get("student_stamp_result") is None
+                and st.session_state.get("student_stamp_geolocation") is not None
+                and st.button("Stamp current attendance", use_container_width=True)
+            ):
+                result = stamp_attendance(
+                    repo,
+                    settings,
+                    course=course,
+                    student=student,
+                    geolocation_payload=st.session_state["student_stamp_geolocation"],
+                )
+                st.session_state["student_stamp_result"] = {
+                    "success": result.success,
+                    "message": result.message,
+                }
+                if result.success:
+                    st.session_state["student_stamp_geolocation"] = None
+                    _clear_cached_database_reads()
+                st.rerun()
+
+            stamp_result = st.session_state.get("student_stamp_result")
+            if stamp_result:
+                if stamp_result["success"]:
+                    st.success(stamp_result["message"])
+                else:
+                    st.error(stamp_result["message"])
+
+    with right:
+        _render_note_card(
+            "Current session",
+            f"{active_schedule['label']} is open from {active_schedule['start_time']} to {active_schedule['end_time']} in {settings.app_timezone}.",
+            tone="success",
+        )
+        _render_note_card(
+            "Attendance rules",
+            f"You must be inside the saved classroom boundary of {float(course['radius_m']):.1f} meters for this course.",
+            tone="info",
+        )
+        st.markdown(
+            f"""
+            <div class="aa-surface aa-surface-muted">
+                <h3>Session details</h3>
+                <div class="aa-detail-list">
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Course</span>
+                        <span class="aa-value">{escape(course["code"])} · {escape(course["title"])}</span>
+                    </div>
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Window</span>
+                        <span class="aa-value">{escape(active_schedule["label"])}</span>
+                    </div>
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Time</span>
+                        <span class="aa-value">{escape(active_schedule["start_time"])} - {escape(active_schedule["end_time"])}</span>
+                    </div>
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Timezone</span>
+                        <span class="aa-value">{escape(settings.app_timezone)}</span>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_student_attendance_tab(recent_records: list[dict]) -> None:
+    _render_page_intro(
+        "Attendance history",
+        "Review your recent classroom records",
+        "Use this table to confirm your recent stamps, recorded windows, and the location accuracy stored with each attendance event.",
     )
     with st.container(border=True):
         st.subheader("Recent attendance")
@@ -1327,6 +1806,64 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
             )
         else:
             st.caption("You have not stamped any attendance yet.")
+
+
+def _render_student_status_tab(summary, course, settings, active_schedule) -> None:
+    _render_page_intro(
+        "Standing",
+        "Track exam eligibility and attendance health",
+        "This workspace keeps the attendance percentage, absence exposure, and course policy together so students understand their status clearly.",
+    )
+    left, right = st.columns([1.15, 0.95], gap="large")
+
+    with left:
+        with st.container(border=True):
+            st.subheader("Exam standing")
+            if summary.denied_exam_entry:
+                st.error("Exam entry is currently denied because you reached the absence threshold.")
+            else:
+                st.success(
+                    f"You are still eligible for exam entry. Safe absences remaining: {summary.remaining_safe_absences}."
+                )
+            st.progress(
+                int(round(max(0.0, min(summary.attendance_pct_of_total, 100.0)))),
+                text=f"Attendance recorded: {summary.attendance_pct_of_total:.1f}% of total meetings",
+            )
+            st.caption(
+                f"Absence threshold: {summary.absence_threshold} meetings • "
+                f"Absence exposure: {summary.absence_pct_of_total:.1f}% of total meetings"
+            )
+
+    with right:
+        pill_class = "aa-risk" if summary.denied_exam_entry else "aa-good"
+        pill_label = "Action required" if summary.denied_exam_entry else "Eligible"
+        st.markdown(
+            f"""
+            <div class="aa-surface aa-surface-muted">
+                <span class="aa-status-pill {pill_class}">{escape(pill_label)}</span>
+                <h3>Course rules</h3>
+                <div class="aa-detail-list">
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Course</span>
+                        <span class="aa-value">{escape(course["code"])}</span>
+                    </div>
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Absence limit</span>
+                        <span class="aa-value">{float(course["absence_limit_pct"]):.0f}%</span>
+                    </div>
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Current window</span>
+                        <span class="aa-value">{escape(active_schedule["label"])} · {escape(active_schedule["start_time"])} - {escape(active_schedule["end_time"])}</span>
+                    </div>
+                    <div class="aa-detail-row">
+                        <span class="aa-label">Timezone</span>
+                        <span class="aa-value">{escape(settings.app_timezone)}</span>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def _render_student_login(repo: AttendanceRepository, settings) -> None:
@@ -1406,11 +1943,15 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
 
         otp_preview_code = st.session_state.get("student_otp_preview_code")
         if otp_preview_code:
-            st.text_input(
-                "Latest code",
-                value=otp_preview_code,
-                disabled=True,
-                key="student_otp_preview_display",
+            st.markdown(
+                f"""
+                <div class="aa-otp-card">
+                    <h3>Latest code</h3>
+                    <p>Use this code in the login form below before it expires.</p>
+                    <div class="aa-otp-code">{escape(str(otp_preview_code))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
     if not st.session_state.get("student_otp_requested", False):
@@ -1451,11 +1992,23 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
 
 def _render_student_portal_intro(settings) -> None:
     otp_mode_label = "on-page preview" if settings.otp_delivery_mode == "console" else "roster email"
-    st.caption(
-        "Sign in in three steps: verify you are in class, request a one-time code, then log in."
-    )
-    st.info(
-        f"Student access only works during the active class window and inside the saved classroom boundary. OTP delivery mode: {otp_mode_label}."
+    st.markdown(
+        f"""
+        <div class="aa-surface aa-surface-muted">
+            <span class="aa-kicker">How it works</span>
+            <h3>Students move through one clear sequence</h3>
+            <p>
+                Access only works during an active class window and only inside the classroom boundary saved by the instructor.
+                The current one-time code delivery mode is {escape(otp_mode_label)}.
+            </p>
+            <ul class="aa-list">
+                <li>Verify classroom access with student ID and live location.</li>
+                <li>Request the latest one-time login code.</li>
+                <li>Sign in and stamp attendance before the window closes.</li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -1836,8 +2389,9 @@ def _render_manager_auth(settings) -> bool:
     st.markdown(
         """
         <div class="aa-signin-card">
-            <h2>🔐 Instructor Sign In</h2>
-            <p>Only the authorized academic instructor can configure courses and export reports.</p>
+            <span class="aa-kicker">Protected access</span>
+            <h2>Instructor sign in</h2>
+            <p>Only the authorized academic operator can configure courses, update rosters, and export reports.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1868,10 +2422,14 @@ def _render_manager_auth(settings) -> bool:
 def _render_otp_delivery_notice(settings) -> None:
     configuration_error = otp_delivery_configuration_error(settings)
     if configuration_error:
-        st.warning(configuration_error)
+        _render_note_card("Delivery setup needs attention", configuration_error, tone="warning")
         return
     if settings.otp_delivery_mode == "console":
-        st.info("Console OTP mode is active. Students will see the latest login code in the app.")
+        _render_note_card(
+            "Development shortcut",
+            "Console OTP mode is active, so students see the latest login code inside the app during testing.",
+            tone="info",
+        )
 
 
 def _otp_entry_help_text(settings) -> str:
@@ -2077,20 +2635,41 @@ def _render_course_summary(repo: AttendanceRepository, settings, course) -> None
         int(course["id"]),
         10000,
     )
+    st.markdown(
+        f"""
+        <div class="aa-course-banner">
+            <div>
+                <span class="aa-kicker">Selected course</span>
+                <h3>{escape(course["code"])} · {escape(course["title"])}</h3>
+                <p>
+                    Runs from {escape(course["start_date"])} to {escape(course["end_date"])} with a
+                    {float(course["radius_m"]):.1f} meter classroom boundary and a
+                    {float(course["absence_limit_pct"]):.0f}% absence limit.
+                </p>
+            </div>
+            <div class="aa-banner-tags">
+                <span class="aa-banner-tag">{len(students)} students</span>
+                <span class="aa-banner-tag">{len(schedules)} timetable windows</span>
+                <span class="aa-banner-tag">{len(attendance_rows)} attendance stamps</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     summary_columns = st.columns(4)
     summary_columns[0].metric("Course", course["code"])
     summary_columns[1].metric("Roster", len(students))
     summary_columns[2].metric("Timetable windows", len(schedules))
     summary_columns[3].metric("Attendance stamps", len(attendance_rows))
-    st.caption(
-        f"{course['title']} | {course['start_date']} to {course['end_date']} | "
-        f"Radius {float(course['radius_m']):.1f} m | Absence limit {float(course['absence_limit_pct']):.0f}%"
-    )
 
 
 def _render_location_summary() -> None:
     if not _has_course_location_selection():
-        st.warning("No classroom point is selected yet. Click the map or use your device location.")
+        _render_note_card(
+            "No classroom location selected yet",
+            "Choose a point on the map or use your device location before saving the course.",
+            tone="warning",
+        )
         return
 
     latitude = float(st.session_state["course_latitude"])
