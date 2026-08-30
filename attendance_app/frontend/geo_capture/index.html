@@ -7,28 +7,29 @@
     <style>
       body {
         margin: 0;
-        font-family: Georgia, "Times New Roman", serif;
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
         background: transparent;
-        color: #16362d;
+        color: #f4f7fb;
       }
       .panel {
-        border: 1px solid rgba(19, 42, 37, 0.12);
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid #253140;
+        border-radius: 14px;
+        background: #0f141c;
         padding: 14px;
       }
       button {
         width: 100%;
         border: none;
-        border-radius: 12px;
-        background: #0f766e;
-        color: #ffffff;
+        border-radius: 10px;
+        background: #c7f36b;
+        color: #121807;
         padding: 12px 14px;
         font-size: 14px;
+        font-weight: 700;
         cursor: pointer;
       }
       button:hover {
-        background: #0d645d;
+        background: #d4ff7b;
       }
       button:disabled {
         opacity: 0.7;
@@ -45,7 +46,7 @@
     <div class="panel">
       <button id="captureButton" type="button">Share location</button>
       <p id="statusText">
-        Browser permission is required. The app uses your coordinates only to validate distance.
+        Location is used to confirm classroom distance.
       </p>
     </div>
     <script>
@@ -143,4 +144,3 @@
     </script>
   </body>
 </html>
-

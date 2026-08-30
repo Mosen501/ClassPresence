@@ -13,14 +13,14 @@
     <style>
       body {
         margin: 0;
-        font-family: Georgia, "Times New Roman", serif;
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
         background: transparent;
-        color: #16362d;
+        color: #f4f7fb;
       }
       .panel {
-        border: 1px solid rgba(19, 42, 37, 0.12);
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid #253140;
+        border-radius: 14px;
+        background: #0f141c;
         padding: 14px;
       }
       .toolbar {
@@ -32,15 +32,16 @@
       }
       button {
         border: none;
-        border-radius: 12px;
-        background: #0f766e;
-        color: #ffffff;
+        border-radius: 10px;
+        background: #c7f36b;
+        color: #121807;
         padding: 10px 14px;
         font-size: 14px;
+        font-weight: 700;
         cursor: pointer;
       }
       button:hover {
-        background: #0d645d;
+        background: #d4ff7b;
       }
       button:disabled {
         opacity: 0.7;
@@ -49,8 +50,12 @@
       #map {
         width: 100%;
         height: 360px;
-        border-radius: 14px;
+        border: 1px solid #253140;
+        border-radius: 12px;
         overflow: hidden;
+      }
+      .leaflet-tile-pane {
+        filter: brightness(0.72) saturate(0.65) contrast(1.18);
       }
       .hint {
         margin: 10px 0 0;
@@ -59,7 +64,7 @@
       }
       .coords {
         font-size: 13px;
-        color: #27443b;
+        color: #a5b0c0;
       }
     </style>
   </head>
@@ -67,12 +72,11 @@
     <div class="panel">
       <div class="toolbar">
         <button id="useLocationButton" type="button">Use my location</button>
-        <span class="coords" id="coordsText">Click the map to choose the classroom point.</span>
+        <span class="coords" id="coordsText">Select the classroom point.</span>
       </div>
       <div id="map"></div>
       <p class="hint" id="statusText">
-        Click anywhere on the map to set the attendance location. A small circle shows the allowed
-        radius.
+        The circle shows the allowed attendance radius.
       </p>
     </div>
     <script
@@ -161,8 +165,8 @@
         } else {
           radiusCircle = L.circle([latitude, longitude], {
             radius: Number(latestArgs.radiusM || 3),
-            color: "#0f766e",
-            fillColor: "#0f766e",
+            color: "#c7f36b",
+            fillColor: "#c7f36b",
             fillOpacity: 0.18,
             weight: 2,
           }).addTo(map);
@@ -196,7 +200,7 @@
         if (latestArgs.hasSelection) {
           drawSelection(Number(latestArgs.latitude), Number(latestArgs.longitude), false);
         } else {
-          coordsText.textContent = "Click the map to choose the classroom point.";
+          coordsText.textContent = "Select the classroom point.";
           if (marker) {
             map.removeLayer(marker);
             marker = null;

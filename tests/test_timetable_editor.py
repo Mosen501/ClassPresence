@@ -26,6 +26,28 @@ class TimetableEditorTestCase(unittest.TestCase):
 
         self.assertEqual([row["label"] for row in rows], ["L1", "L2", "L3", "L4", "L5", "L6", "L7"])
 
+    def test_editor_keeps_friday_and_saturday_windows(self) -> None:
+        rows = _build_timetable_editor_rows(
+            [
+                {
+                    "weekday": 4,
+                    "label": "Weekend Lab",
+                    "start_time": "10:00",
+                    "end_time": "11:30",
+                },
+                {
+                    "weekday": 5,
+                    "label": "Weekend Lab",
+                    "start_time": "10:00",
+                    "end_time": "11:30",
+                },
+            ],
+            show_default_rows=False,
+        )
+
+        self.assertTrue(rows[0]["Friday"])
+        self.assertTrue(rows[0]["Saturday"])
+
 
 if __name__ == "__main__":
     unittest.main()
