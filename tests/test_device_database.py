@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 
 from attendance_app.database import AttendanceRepository
 
@@ -66,6 +67,66 @@ class DeviceDatabaseTestCase(unittest.TestCase):
 
         with self.assertRaises(sqlite3.IntegrityError):
             self.repo.record_attendance(student_id=int(students[1]["id"]), **values)
+
+    def test_existing_database_migrates_lecture_security_columns(self) -> None:
+        database_path = f"{self.temp_dir.name}/legacy.db"
+        with closing(sqlite3.connect(database_path)) as connection:
+            connection.execute(
+                """
+                CREATE TABLE otp_codes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    course_id INTEGER NOT NULL,
+                    student_id INTEGER NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    delivery_method TEXT NOT NULL,
+                    delivery_target TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT,
+                    invalidated_at TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE attendance_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    course_id INTEGER NOT NULL,
+                    student_id INTEGER NOT NULL,
+                    schedule_id INTEGER NOT NULL,
+                    attendance_date TEXT NOT NULL,
+                    stamped_at TEXT NOT NULL,
+                    student_latitude REAL NOT NULL,
+                    student_longitude REAL NOT NULL,
+                    accuracy_m REAL,
+                    distance_m REAL NOT NULL,
+                    device_info TEXT NOT NULL
+                )
+                """
+            )
+            connection.commit()
+
+        legacy_repo = AttendanceRepository(database_path)
+        legacy_repo.init_schema()
+        legacy_repo.init_schema()
+
+        with closing(sqlite3.connect(database_path)) as connection:
+            otp_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(otp_codes)")
+            }
+            audit_table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("device_audit_events",),
+            ).fetchone()
+            audit_index = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+                ("ix_device_audit_course_created",),
+            ).fetchone()
+
+        self.assertIn("schedule_id", otp_columns)
+        self.assertIn("attendance_date", otp_columns)
+        self.assertIsNotNone(audit_table)
+        self.assertIsNotNone(audit_index)
 
 
 if __name__ == "__main__":

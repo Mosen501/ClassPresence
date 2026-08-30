@@ -21,11 +21,12 @@ from attendance_app.services import (
     StudentAccessContext,
     authenticate_student_passkey,
     build_student_attendance_summary,
-    find_active_schedule,
     now_in_app_timezone,
     otp_delivery_configuration_error,
     register_student_passkey,
     request_login_code_for_access_context,
+    reset_student_device,
+    resolve_active_student_session,
     resolve_student_access_context,
     seed_demo_data,
     stamp_attendance,
@@ -754,6 +755,23 @@ def _cached_list_proxy_alerts(
 
 
 @st.cache_data(
+    ttl=10,
+    max_entries=512,
+    show_spinner=False,
+    refresh_mode="background",
+)
+def _cached_list_device_audit_events(
+    database_target: str,
+    course_id: int,
+    limit: int,
+) -> list[dict]:
+    return AttendanceRepository(database_target).list_device_audit_events(
+        course_id=course_id,
+        limit=limit,
+    )
+
+
+@st.cache_data(
     ttl=300,
     max_entries=64,
     show_spinner=False,
@@ -1349,6 +1367,11 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
     _render_course_strip(repo, course)
     course_id = int(course["id"])
     alerts = _cached_list_proxy_alerts(settings.database_target, course_id, 1000)
+    audit_events = _cached_list_device_audit_events(
+        settings.database_target,
+        course_id,
+        1000,
+    )
     students = _cached_list_students(settings.database_target, course_id)
     open_alerts = [row for row in alerts if not row.get("resolved_at")]
     protected_students = sum(bool(row.get("registered_device_id")) for row in students)
@@ -1361,7 +1384,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                 "blocked proxy attempts",
             ),
             ("Protected", protected_students, f"of {len(students)} students"),
-            ("Resolved", len(alerts) - len(open_alerts), "reviewed incidents"),
+            ("Device events", len(audit_events), "permanent audit"),
         ]
     )
 
@@ -1423,12 +1446,54 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                 selected_student = st.selectbox("Student", list(student_labels))
                 reset_device = st.form_submit_button("Reset device", width="stretch")
             if reset_device:
-                repo.delete_registered_device(student_id=student_labels[selected_student])
-                _invalidate_read_caches()
-                st.session_state["manager_notice"] = "Student device reset."
-                st.rerun()
+                try:
+                    reset_student_device(
+                        repo,
+                        settings,
+                        student_id=student_labels[selected_student],
+                        course_id=course_id,
+                        actor_identifier=str(
+                            (st.session_state.get("manager_auth") or {}).get(
+                                "username",
+                                "manager",
+                            )
+                        ),
+                    )
+                    _invalidate_read_caches()
+                    st.session_state["manager_notice"] = "Student device reset."
+                    st.rerun()
+                except Exception as error:
+                    st.error(str(error))
         else:
             st.info("No registered devices.")
+
+    _render_section_title("Device history", f"{len(audit_events)} permanent events")
+    if audit_events:
+        st.dataframe(
+            [
+                {
+                    "Date": str(row["created_at"])[:10],
+                    "Time": str(row["created_at"])[11:16],
+                    "Student": row["student_name"],
+                    "Student ID": row["university_id"],
+                    "Event": str(row["event_type"]).replace("_", " ").title(),
+                    "Actor": row["actor_identifier"],
+                    "Course": row.get("course_code") or "",
+                    "Previous device": str(row["previous_device_id"])
+                    if row.get("previous_device_id") is not None
+                    else "",
+                    "New device": str(row["new_device_id"])
+                    if row.get("new_device_id") is not None
+                    else "",
+                }
+                for row in audit_events
+            ],
+            width="stretch",
+            hide_index=True,
+            lazy=True,
+        )
+    else:
+        _empty_state("No device changes have been recorded.")
 
 
 @st.fragment
@@ -1526,6 +1591,9 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
     _render_topbar(settings, context="Student check-in")
     left, center, right = st.columns([0.2, 1, 0.2], gap="large")
     with center:
+        notice = st.session_state.pop("student_access_notice", None)
+        if notice:
+            st.warning(notice)
         _render_page_head("Student access", "Check in", "Enter your student ID and verify your classroom location.", settings)
         delivery_error = otp_delivery_configuration_error(settings)
         if delivery_error:
@@ -1596,10 +1664,14 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
 
 def _render_student_portal(repo: AttendanceRepository, settings) -> None:
     auth = st.session_state.get("student_auth") or {}
-    course = _cached_get_course(settings.database_target, int(auth.get("course_id", 0)))
-    student = _cached_get_student(settings.database_target, int(auth.get("student_id", 0)))
-    if course is None or student is None:
-        _sign_out_student()
+    try:
+        course, student, active_schedule = resolve_active_student_session(
+            repo,
+            settings,
+            auth=auth,
+        )
+    except ValueError:
+        _expire_student_session()
         st.rerun()
 
     _render_topbar(settings, context=f"{course['code']} · {student['full_name']}")
@@ -1619,8 +1691,6 @@ def _render_student_portal(repo: AttendanceRepository, settings) -> None:
             _sign_out_student()
             st.rerun()
 
-    schedules = _cached_list_schedules(settings.database_target, int(course["id"]))
-    active_schedule = find_active_schedule(schedules, now_in_app_timezone(settings))
     if section == "Check in":
         _render_student_check_in(repo, settings, course, student, active_schedule)
     elif section == "Status":
@@ -1632,6 +1702,15 @@ def _render_student_portal(repo: AttendanceRepository, settings) -> None:
 @st.fragment
 def _render_student_check_in(repo, settings, course, student, active_schedule) -> None:
     auth = st.session_state.get("student_auth") or {}
+    try:
+        course, student, active_schedule = resolve_active_student_session(
+            repo,
+            settings,
+            auth=auth,
+        )
+    except ValueError:
+        _expire_student_session()
+        st.rerun()
     _render_page_head("Attendance window", "Check in", f"{course['code']} · {course['title']}", settings)
     if active_schedule is None:
         _closed_check_in(repo, settings, course)
@@ -1669,6 +1748,9 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
                         "device_id": auth.get("device_id"),
                         "credential_id": auth.get("credential_id"),
                         "device_binding_hash": auth.get("device_binding_hash"),
+                        "schedule_id": auth.get("schedule_id"),
+                        "attendance_date": auth.get("attendance_date"),
+                        "session_expires_at": auth.get("session_expires_at"),
                     },
                 )
                 st.session_state["student_stamp_result"] = {
@@ -2239,9 +2321,11 @@ def _verify_student_otp(repo, settings, context: dict, code: str) -> None:
                 if verified_device is not None
                 else None
             ),
+            schedule_id=int(context["schedule_id"]),
+            attendance_date=str(context["attendance_date"]),
         )
         if context["device_enrolled"]:
-            _start_student_session(course, student, verified_device)
+            _start_student_session(course, student, verified_device, context)
             st.rerun()
         st.session_state["student_otp_verified"] = True
         st.session_state["student_passkey_operation"] = None
@@ -2312,7 +2396,7 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
         if course is None or student is None:
             raise ValueError("Student access context is no longer valid.")
         _invalidate_read_caches()
-        _start_student_session(course, student, verified_device)
+        _start_student_session(course, student, verified_device, context)
         st.rerun()
     except Exception as error:
         st.session_state["student_passkey_error"] = str(error)
@@ -2377,7 +2461,12 @@ def _passkey_relying_party(settings) -> tuple[str, str]:
     return rp_id, origin
 
 
-def _start_student_session(course, student, verified_device: dict | None) -> None:
+def _start_student_session(
+    course,
+    student,
+    verified_device: dict | None,
+    context: dict,
+) -> None:
     if verified_device is None:
         raise ValueError("A verified device is required.")
     st.session_state["student_auth"] = {
@@ -2386,6 +2475,9 @@ def _start_student_session(course, student, verified_device: dict | None) -> Non
         "device_id": int(verified_device["device_id"]),
         "credential_id": str(verified_device["credential_id"]),
         "device_binding_hash": str(verified_device["device_binding_hash"]),
+        "schedule_id": int(context["schedule_id"]),
+        "attendance_date": str(context["attendance_date"]),
+        "session_expires_at": str(context["session_expires_at"]),
     }
     st.session_state["student_section"] = STUDENT_SECTIONS[0]
     st.session_state["student_stamp_result"] = None
@@ -2435,6 +2527,16 @@ def _sign_out_student() -> None:
     _reset_student_access(clear_id=True)
 
 
+def _expire_student_session() -> None:
+    st.session_state["student_auth"] = None
+    st.session_state["student_stamp_geolocation"] = None
+    st.session_state["student_stamp_result"] = None
+    st.session_state["student_access_notice"] = (
+        "Lecture verification expired. Verify passkey and OTP for the current window."
+    )
+    _reset_student_access(clear_id=False)
+
+
 def _course_is_active(course, target_date: date) -> bool:
     start = parse_iso_date(str(course["start_date"]))
     end = parse_iso_date(str(course["end_date"] or course["start_date"]))
@@ -2479,6 +2581,7 @@ def _init_session_state() -> None:
         "loaded_course_location": None,
         "course_location_processed": None,
         "student_auth": None,
+        "student_access_notice": None,
         "student_section": STUDENT_SECTIONS[0],
         "pending_university_id": "",
         "clear_pending_university_id": False,

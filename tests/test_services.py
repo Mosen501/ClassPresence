@@ -14,6 +14,9 @@ from attendance_app.services import (
     authenticate_student_passkey,
     otp_delivery_configuration_error,
     register_student_passkey,
+    request_login_code_for_access_context,
+    reset_student_device,
+    resolve_active_student_session,
     resolve_student_access_context,
     stamp_attendance,
     verify_login_code_for_access_context,
@@ -262,9 +265,41 @@ class ServicesTestCase(unittest.TestCase):
                 )
 
         self.assertEqual(verified["device_id"], registered["device_id"])
+        self.assertEqual(verified["schedule_id"], context.schedule_id)
+        self.assertEqual(verified["attendance_date"], context.attendance_date)
+        self.assertEqual(verified["session_expires_at"], context.session_expires_at)
         device = self.repo.get_registered_device_for_student(int(student["id"]))
         assert device is not None
         self.assertEqual(int(device["sign_count"]), 1)
+        audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
+        self.assertEqual(audit[0]["event_type"], "student_device_registered")
+        auth = {
+            "course_id": int(course["id"]),
+            "student_id": int(student["id"]),
+            **verified,
+        }
+        with patch(
+            "attendance_app.services.now_in_app_timezone",
+            return_value=datetime(2026, 7, 1, 10, 30, tzinfo=ZoneInfo("Asia/Riyadh")),
+        ):
+            active_course, active_student, active_schedule = resolve_active_student_session(
+                self.repo,
+                self.settings,
+                auth=auth,
+            )
+        self.assertEqual(int(active_course["id"]), int(course["id"]))
+        self.assertEqual(int(active_student["id"]), int(student["id"]))
+        self.assertEqual(int(active_schedule["id"]), context.schedule_id)
+        with patch(
+            "attendance_app.services.now_in_app_timezone",
+            return_value=datetime(2026, 7, 1, 11, 0, tzinfo=ZoneInfo("Asia/Riyadh")),
+        ):
+            with self.assertRaisesRegex(ValueError, "session has expired"):
+                resolve_active_student_session(
+                    self.repo,
+                    self.settings,
+                    auth=auth,
+                )
 
     def test_registered_device_blocks_another_student_and_creates_alert(self) -> None:
         course, student = self._seed_course()
@@ -325,7 +360,10 @@ class ServicesTestCase(unittest.TestCase):
             created_at=now.isoformat(),
             device_binding_hash="expected-device-hash",
             credential_id="credential-one",
+            schedule_id=int(self.repo.list_schedules_for_course(int(course["id"]))[0]["id"]),
+            attendance_date="2026-07-01",
         )
+        schedule = self.repo.list_schedules_for_course(int(course["id"]))[0]
 
         with patch("attendance_app.services.now_in_app_timezone", return_value=now):
             with self.assertRaisesRegex(ValueError, "device that requested it"):
@@ -337,7 +375,201 @@ class ServicesTestCase(unittest.TestCase):
                     code="123456",
                     device_binding_hash="different-device-hash",
                     credential_id="credential-one",
+                    schedule_id=int(schedule["id"]),
+                    attendance_date="2026-07-01",
                 )
+
+    def test_otp_is_bound_to_schedule_and_expires_at_window_end(self) -> None:
+        course, _student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 55, tzinfo=ZoneInfo("Asia/Riyadh"))
+        payload = {
+            "latitude": TEST_COURSE_LATITUDE,
+            "longitude": TEST_COURSE_LONGITUDE,
+            "accuracy_m": 5,
+            "captured_at": now.isoformat(),
+            "device_token": "test-device-token-00000001",
+        }
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            context = resolve_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                geolocation_payload=payload,
+            )
+            request_login_code_for_access_context(
+                self.repo,
+                self.settings,
+                access_context=context,
+            )
+
+        otp = self.repo.get_latest_active_otp(
+            course_id=int(course["id"]),
+            student_id=context.student_id,
+            now_iso=now.isoformat(),
+        )
+        assert otp is not None
+        self.assertEqual(int(otp["schedule_id"]), context.schedule_id)
+        self.assertEqual(otp["attendance_date"], context.attendance_date)
+        self.assertEqual(otp["expires_at"], context.session_expires_at)
+
+    def test_otp_from_previous_window_is_rejected_in_next_window(self) -> None:
+        course, student = self._seed_course()
+        first_schedule = self.repo.list_schedules_for_course(int(course["id"]))[0]
+        self.repo.add_schedule(
+            course_id=int(course["id"]),
+            weekday=2,
+            label="Second Lecture",
+            start_time="11:01",
+            end_time="12:00",
+            created_at="2026-07-01T08:00:00+03:00",
+        )
+        second_schedule = self.repo.list_schedules_for_course(int(course["id"]))[1]
+        self.repo.create_otp(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            code_hash=hash_otp("123456", self.settings.otp_pepper),
+            delivery_method="email",
+            delivery_target="masa@example.edu",
+            expires_at="2026-07-01T11:10:00+03:00",
+            created_at="2026-07-01T10:59:00+03:00",
+            device_binding_hash="expected-device-hash",
+            credential_id="credential-one",
+            schedule_id=int(first_schedule["id"]),
+            attendance_date="2026-07-01",
+        )
+
+        with patch(
+            "attendance_app.services.now_in_app_timezone",
+            return_value=datetime(2026, 7, 1, 11, 5, tzinfo=ZoneInfo("Asia/Riyadh")),
+        ):
+            with self.assertRaisesRegex(ValueError, "different lecture window"):
+                verify_login_code_for_access_context(
+                    self.repo,
+                    self.settings,
+                    course_id=int(course["id"]),
+                    student_id=int(student["id"]),
+                    code="123456",
+                    device_binding_hash="expected-device-hash",
+                    credential_id="credential-one",
+                    schedule_id=int(second_schedule["id"]),
+                    attendance_date="2026-07-01",
+                )
+
+    def test_passkey_proof_from_previous_window_cannot_request_next_otp(self) -> None:
+        course, student = self._seed_course()
+        first_schedule = self.repo.list_schedules_for_course(int(course["id"]))[0]
+        self.repo.add_schedule(
+            course_id=int(course["id"]),
+            weekday=2,
+            label="Second Lecture",
+            start_time="11:01",
+            end_time="12:00",
+            created_at="2026-07-01T08:00:00+03:00",
+        )
+        device_hash = hash_device_token(
+            "test-device-token-00000001",
+            self.settings.otp_pepper,
+        )
+        device_id = self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="credential-one",
+            public_key="public-key-one",
+            sign_count=0,
+            device_binding_hash=device_hash,
+            transports="[]",
+            aaguid="",
+            credential_device_type="single_device",
+            credential_backed_up=False,
+            created_at="2026-07-01T08:00:00+03:00",
+        )
+        next_window = datetime(2026, 7, 1, 11, 5, tzinfo=ZoneInfo("Asia/Riyadh"))
+        with patch("attendance_app.services.now_in_app_timezone", return_value=next_window):
+            context = resolve_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                geolocation_payload={
+                    "latitude": TEST_COURSE_LATITUDE,
+                    "longitude": TEST_COURSE_LONGITUDE,
+                    "accuracy_m": 5,
+                    "captured_at": next_window.isoformat(),
+                    "device_token": "test-device-token-00000001",
+                },
+            )
+            with self.assertRaisesRegex(ValueError, "passkey again"):
+                request_login_code_for_access_context(
+                    self.repo,
+                    self.settings,
+                    access_context=context,
+                    verified_device={
+                        "device_id": device_id,
+                        "credential_id": "credential-one",
+                        "device_binding_hash": device_hash,
+                        "schedule_id": int(first_schedule["id"]),
+                        "attendance_date": "2026-07-01",
+                        "session_expires_at": "2026-07-01T11:00:00+03:00",
+                    },
+                )
+
+    def test_device_reset_is_blocked_during_lecture_and_audited_after(self) -> None:
+        course, student = self._seed_course()
+        device_id = self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="credential-one",
+            public_key="public-key-one",
+            sign_count=0,
+            device_binding_hash="registered-device-hash",
+            transports="[]",
+            aaguid="",
+            credential_device_type="single_device",
+            credential_backed_up=False,
+            created_at="2026-07-01T08:00:00+03:00",
+        )
+        self.assertGreater(device_id, 0)
+
+        with patch(
+            "attendance_app.services.now_in_app_timezone",
+            return_value=datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh")),
+        ):
+            with self.assertRaisesRegex(ValueError, "reset is blocked"):
+                reset_student_device(
+                    self.repo,
+                    self.settings,
+                    student_id=int(student["id"]),
+                    course_id=int(course["id"]),
+                    actor_identifier="manager_user",
+                )
+        self.assertIsNotNone(self.repo.get_registered_device_for_student(int(student["id"])))
+        self.assertEqual(self.repo.list_device_audit_events(course_id=int(course["id"])), [])
+
+        with patch(
+            "attendance_app.services.now_in_app_timezone",
+            return_value=datetime(2026, 7, 1, 12, 0, tzinfo=ZoneInfo("Asia/Riyadh")),
+        ):
+            self.assertTrue(
+                reset_student_device(
+                    self.repo,
+                    self.settings,
+                    student_id=int(student["id"]),
+                    course_id=int(course["id"]),
+                    actor_identifier="manager_user",
+                )
+            )
+
+        self.assertIsNone(self.repo.get_registered_device_for_student(int(student["id"])))
+        audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
+        self.assertEqual(audit[0]["event_type"], "manager_device_reset")
+        self.assertEqual(audit[0]["actor_identifier"], "manager_user")
+        self.assertEqual(int(audit[0]["previous_device_id"]), device_id)
+        audited_student_name = audit[0]["student_name"]
+        self.repo.sync_course_roster(
+            course_id=int(course["id"]),
+            roster_rows=[],
+            created_at="2026-07-01T12:01:00+03:00",
+        )
+        permanent_audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
+        self.assertEqual(len(permanent_audit), 1)
+        self.assertEqual(permanent_audit[0]["student_name"], audited_student_name)
 
     def test_delete_schedule_removes_existing_time_window(self) -> None:
         course, _student = self._seed_course()

@@ -55,6 +55,8 @@ class StudentAccessContext:
     schedule_label: str
     schedule_start_time: str
     schedule_end_time: str
+    attendance_date: str
+    session_expires_at: str
     distance_m: float
     radius_m: float
     device_binding_hash: str
@@ -98,11 +100,21 @@ def request_login_code(
     if student is None:
         raise ValueError("Student is not enrolled in that course.")
 
+    now = now_in_app_timezone(settings)
+    active_schedule = find_active_schedule(
+        repo.list_schedules_for_course(int(course["id"])),
+        now,
+    )
+    if active_schedule is None:
+        raise ValueError("Student access is closed right now.")
     return _issue_login_code(
         repo,
         settings,
         course=course,
         student=student,
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=now.date().isoformat(),
+        window_expires_at=_schedule_window_end(now, active_schedule),
     )
 
 
@@ -163,6 +175,8 @@ def resolve_student_access_context(
                 schedule_label=str(active_schedule["label"]),
                 schedule_start_time=str(active_schedule["start_time"]),
                 schedule_end_time=str(active_schedule["end_time"]),
+                attendance_date=now.date().isoformat(),
+                session_expires_at=_schedule_window_end(now, active_schedule).isoformat(),
                 distance_m=distance_m,
                 radius_m=float(context["radius_m"]),
                 device_binding_hash=device_binding_hash,
@@ -240,6 +254,7 @@ def request_login_code_for_access_context(
     access_context: StudentAccessContext,
     verified_device: dict | None = None,
 ) -> OTPRequestResult:
+    _require_access_context_window(repo, settings, access_context)
     course = repo.get_course(access_context.course_id)
     student = repo.get_student(access_context.student_id)
     if course is None or student is None:
@@ -258,6 +273,12 @@ def request_login_code_for_access_context(
             )
         ):
             raise ValueError("The verified passkey does not match this student device.")
+        if (
+            int(verified_device.get("schedule_id", 0)) != access_context.schedule_id
+            or str(verified_device.get("attendance_date", ""))
+            != access_context.attendance_date
+        ):
+            raise ValueError("Verify the passkey again for this lecture window.")
         credential_id = str(registered_device["credential_id"])
 
     return _issue_login_code(
@@ -267,6 +288,9 @@ def request_login_code_for_access_context(
         student=student,
         device_binding_hash=access_context.device_binding_hash,
         credential_id=credential_id,
+        schedule_id=access_context.schedule_id,
+        attendance_date=access_context.attendance_date,
+        window_expires_at=datetime.fromisoformat(access_context.session_expires_at),
     )
 
 
@@ -279,6 +303,8 @@ def verify_login_code_for_access_context(
     code: str,
     device_binding_hash: str | None = None,
     credential_id: str | None = None,
+    schedule_id: int | None = None,
+    attendance_date: str | None = None,
 ):
     course = repo.get_course(course_id)
     if course is None:
@@ -293,8 +319,12 @@ def verify_login_code_for_access_context(
         raise ValueError("This course is not active today.")
 
     schedules = repo.list_schedules_for_course(int(course["id"]))
-    if find_active_schedule(schedules, now) is None:
+    active_schedule = find_active_schedule(schedules, now)
+    if active_schedule is None:
         raise ValueError("Student access is closed right now. Request a new code during class.")
+    current_date = now.date().isoformat()
+    if schedule_id != int(active_schedule["id"]) or attendance_date != current_date:
+        raise ValueError("This verification belongs to a different lecture window.")
 
     otp_record = repo.get_latest_active_otp(
         course_id=int(course["id"]),
@@ -303,6 +333,12 @@ def verify_login_code_for_access_context(
     )
     if otp_record is None:
         raise ValueError("No active login code was found. Generate a new code.")
+
+    if (
+        int(otp_record.get("schedule_id") or 0) != schedule_id
+        or str(otp_record.get("attendance_date") or "") != attendance_date
+    ):
+        raise ValueError("This code belongs to a different lecture window. Request a new code.")
 
     expected_device_hash = str(otp_record.get("device_binding_hash") or "")
     if expected_device_hash and not hmac.compare_digest(
@@ -336,6 +372,7 @@ def register_student_passkey(
     expected_origin: str,
 ) -> dict:
     now = now_in_app_timezone(settings)
+    _require_access_context_window(repo, settings, access_context, now=now)
     device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
     if not hmac.compare_digest(device_binding_hash, access_context.device_binding_hash):
         _record_proxy_alert(
@@ -387,10 +424,20 @@ def register_student_passkey(
         credential_backed_up=passkey.credential_backed_up,
         created_at=now.isoformat(),
     )
+    repo.record_device_registration_audit(
+        student_id=access_context.student_id,
+        course_id=access_context.course_id,
+        device_id=device_id,
+        device_binding_hash=device_binding_hash,
+        created_at=now.isoformat(),
+    )
     return {
         "device_id": device_id,
         "credential_id": passkey.credential_id,
         "device_binding_hash": device_binding_hash,
+        "schedule_id": access_context.schedule_id,
+        "attendance_date": access_context.attendance_date,
+        "session_expires_at": access_context.session_expires_at,
     }
 
 
@@ -406,6 +453,7 @@ def authenticate_student_passkey(
     expected_origin: str,
 ) -> dict:
     now = now_in_app_timezone(settings)
+    _require_access_context_window(repo, settings, access_context, now=now)
     device = repo.get_registered_device_for_student(access_context.student_id)
     if device is None:
         raise ValueError("No registered device was found for this student.")
@@ -445,7 +493,78 @@ def authenticate_student_passkey(
         "device_id": int(device["id"]),
         "credential_id": passkey.credential_id,
         "device_binding_hash": device_binding_hash,
+        "schedule_id": access_context.schedule_id,
+        "attendance_date": access_context.attendance_date,
+        "session_expires_at": access_context.session_expires_at,
     }
+
+
+def reset_student_device(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    student_id: int,
+    course_id: int,
+    actor_identifier: str,
+) -> bool:
+    now = now_in_app_timezone(settings)
+    for course in repo.list_course_contexts_for_student_id(student_id):
+        if not _course_is_active_today(course, now):
+            continue
+        active_schedule = find_active_schedule(
+            repo.list_schedules_for_course(int(course["id"])),
+            now,
+        )
+        if active_schedule is not None:
+            raise ValueError(
+                f"Device reset is blocked while {course['code']} · "
+                f"{active_schedule['label']} is active."
+            )
+    return repo.reset_registered_device_with_audit(
+        student_id=student_id,
+        course_id=course_id,
+        actor_identifier=actor_identifier,
+        created_at=now.isoformat(),
+    )
+
+
+def resolve_active_student_session(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    auth: dict,
+):
+    now = now_in_app_timezone(settings)
+    course = repo.get_course(int(auth.get("course_id", 0)))
+    student = repo.get_student(int(auth.get("student_id", 0)))
+    if course is None or student is None or not _course_is_active_today(course, now):
+        raise ValueError("Student session has expired.")
+    if str(auth.get("attendance_date", "")) != now.date().isoformat():
+        raise ValueError("Student session has expired.")
+    try:
+        expires_at = datetime.fromisoformat(str(auth["session_expires_at"]))
+    except (KeyError, ValueError) as error:
+        raise ValueError("Student session has expired.") from error
+    if now >= expires_at:
+        raise ValueError("Student session has expired.")
+
+    active_schedule = find_active_schedule(
+        repo.list_schedules_for_course(int(course["id"])),
+        now,
+    )
+    if active_schedule is None or int(active_schedule["id"]) != int(auth.get("schedule_id", 0)):
+        raise ValueError("Student session has expired.")
+    device = repo.get_registered_device_for_student(int(student["id"]))
+    if (
+        device is None
+        or int(device["id"]) != int(auth.get("device_id", 0))
+        or not hmac.compare_digest(
+            str(device["device_binding_hash"]),
+            str(auth.get("device_binding_hash", "")),
+        )
+    ):
+        raise ValueError("Student device authorization has expired.")
+    return course, student, active_schedule
 
 
 def verify_login_code(
@@ -465,19 +584,21 @@ def verify_login_code(
         raise ValueError("Student is not enrolled in that course.")
 
     now = now_in_app_timezone(settings)
-    otp_record = repo.get_latest_active_otp(
+    active_schedule = find_active_schedule(
+        repo.list_schedules_for_course(int(course["id"])),
+        now,
+    )
+    if active_schedule is None:
+        raise ValueError("Student access is closed right now.")
+    return verify_login_code_for_access_context(
+        repo,
+        settings,
         course_id=int(course["id"]),
         student_id=int(student["id"]),
-        now_iso=now.isoformat(),
+        code=code,
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=now.date().isoformat(),
     )
-    if otp_record is None:
-        raise ValueError("No active login code was found. Request a new code.")
-
-    if hash_otp(code.strip(), settings.otp_pepper) != otp_record["code_hash"]:
-        raise ValueError("The one-time code is invalid.")
-
-    repo.mark_otp_used(int(otp_record["id"]), now.isoformat())
-    return course, student
 
 
 def find_active_schedule(schedules, now: datetime):
@@ -573,6 +694,25 @@ def stamp_attendance(
         return AttendanceStampResult(
             success=False,
             message="Verify your registered passkey before submitting attendance.",
+        )
+    if (
+        int(verified_device.get("schedule_id", 0)) != int(active_schedule["id"])
+        or str(verified_device.get("attendance_date", "")) != attendance_date
+    ):
+        return AttendanceStampResult(
+            success=False,
+            message="Your lecture verification has expired. Verify passkey and OTP again.",
+        )
+    try:
+        session_expires_at = datetime.fromisoformat(
+            str(verified_device.get("session_expires_at", ""))
+        )
+    except ValueError:
+        session_expires_at = now
+    if now >= session_expires_at:
+        return AttendanceStampResult(
+            success=False,
+            message="Your lecture verification has expired. Verify passkey and OTP again.",
         )
     verified_binding_hash = str(verified_device.get("device_binding_hash", ""))
     if (
@@ -943,6 +1083,39 @@ def _course_is_active_today(course, now: datetime) -> bool:
     return start_date <= now.date() <= end_date
 
 
+def _schedule_window_end(now: datetime, schedule) -> datetime:
+    return datetime.combine(
+        now.date(),
+        parse_hhmm(str(schedule["end_time"])),
+        tzinfo=now.tzinfo,
+    )
+
+
+def _require_access_context_window(
+    repo: AttendanceRepository,
+    settings: Settings,
+    access_context: StudentAccessContext,
+    *,
+    now: datetime | None = None,
+) -> None:
+    current = now or now_in_app_timezone(settings)
+    if access_context.attendance_date != current.date().isoformat():
+        raise ValueError("This lecture verification has expired. Start again.")
+    course = repo.get_course(access_context.course_id)
+    if course is None or not _course_is_active_today(course, current):
+        raise ValueError("This lecture verification has expired. Start again.")
+    active_schedule = find_active_schedule(
+        repo.list_schedules_for_course(access_context.course_id),
+        current,
+    )
+    if (
+        active_schedule is None
+        or int(active_schedule["id"]) != access_context.schedule_id
+        or current >= datetime.fromisoformat(access_context.session_expires_at)
+    ):
+        raise ValueError("This lecture verification has expired. Start again.")
+
+
 def _issue_login_code(
     repo: AttendanceRepository,
     settings: Settings,
@@ -951,6 +1124,9 @@ def _issue_login_code(
     student,
     device_binding_hash: str | None = None,
     credential_id: str | None = None,
+    schedule_id: int | None = None,
+    attendance_date: str | None = None,
+    window_expires_at: datetime | None = None,
 ) -> OTPRequestResult:
     configuration_error = otp_delivery_configuration_error(settings)
     if configuration_error:
@@ -961,6 +1137,8 @@ def _issue_login_code(
 
     issued_at = now_in_app_timezone(settings)
     expires_at = issued_at + timedelta(minutes=settings.otp_expiry_minutes)
+    if window_expires_at is not None:
+        expires_at = min(expires_at, window_expires_at)
     code = generate_otp()
 
     repo.invalidate_active_otps(
@@ -978,6 +1156,8 @@ def _issue_login_code(
         created_at=issued_at.isoformat(),
         device_binding_hash=device_binding_hash,
         credential_id=credential_id,
+        schedule_id=schedule_id,
+        attendance_date=attendance_date,
     )
 
     try:

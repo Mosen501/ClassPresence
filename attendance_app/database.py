@@ -76,6 +76,8 @@ _SQLITE_SCHEMA_STATEMENTS = (
         invalidated_at TEXT,
         device_binding_hash TEXT,
         credential_id TEXT,
+        schedule_id INTEGER REFERENCES course_schedules(id) ON DELETE CASCADE,
+        attendance_date TEXT,
         created_at TEXT NOT NULL
     )
     """,
@@ -93,6 +95,24 @@ _SQLITE_SCHEMA_STATEMENTS = (
         credential_backed_up INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         last_used_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS device_audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER NOT NULL,
+        university_id TEXT NOT NULL,
+        student_name TEXT NOT NULL,
+        course_id INTEGER,
+        course_code TEXT,
+        event_type TEXT NOT NULL,
+        actor_type TEXT NOT NULL,
+        actor_identifier TEXT NOT NULL,
+        previous_device_id INTEGER,
+        previous_device_binding_hash TEXT,
+        new_device_id INTEGER,
+        new_device_binding_hash TEXT,
+        created_at TEXT NOT NULL
     )
     """,
     """
@@ -193,6 +213,8 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         invalidated_at TEXT,
         device_binding_hash TEXT,
         credential_id TEXT,
+        schedule_id BIGINT REFERENCES course_schedules(id) ON DELETE CASCADE,
+        attendance_date TEXT,
         created_at TEXT NOT NULL
     )
     """,
@@ -210,6 +232,24 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         credential_backed_up INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         last_used_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS device_audit_events (
+        id BIGSERIAL PRIMARY KEY,
+        student_id BIGINT NOT NULL,
+        university_id TEXT NOT NULL,
+        student_name TEXT NOT NULL,
+        course_id BIGINT,
+        course_code TEXT,
+        event_type TEXT NOT NULL,
+        actor_type TEXT NOT NULL,
+        actor_identifier TEXT NOT NULL,
+        previous_device_id BIGINT,
+        previous_device_binding_hash TEXT,
+        new_device_id BIGINT,
+        new_device_binding_hash TEXT,
+        created_at TEXT NOT NULL
     )
     """,
     """
@@ -462,6 +502,18 @@ class AttendanceRepository:
             (university_id,),
         )
 
+    def list_course_contexts_for_student_id(self, student_id: int) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT c.*
+            FROM courses c
+            INNER JOIN course_students cs ON cs.course_id = c.id
+            WHERE cs.student_id = ?
+            ORDER BY c.code
+            """,
+            (student_id,),
+        )
+
     def add_schedule(
         self,
         *,
@@ -597,13 +649,16 @@ class AttendanceRepository:
         created_at: str,
         device_binding_hash: str | None = None,
         credential_id: str | None = None,
+        schedule_id: int | None = None,
+        attendance_date: str | None = None,
     ) -> int:
         query = """
             INSERT INTO otp_codes (
                 course_id, student_id, code_hash, delivery_method, delivery_target,
-                expires_at, device_binding_hash, credential_id, created_at
+                expires_at, device_binding_hash, credential_id, schedule_id,
+                attendance_date, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         if self.backend == "postgres":
             query += " RETURNING id"
@@ -618,6 +673,8 @@ class AttendanceRepository:
                 expires_at,
                 device_binding_hash,
                 credential_id,
+                schedule_id,
+                attendance_date,
                 created_at,
             ),
             returns_id=True,
@@ -724,13 +781,101 @@ class AttendanceRepository:
             (sign_count, last_used_at, device_id),
         )
 
-    def delete_registered_device(self, *, student_id: int) -> bool:
+    def reset_registered_device_with_audit(
+        self,
+        *,
+        student_id: int,
+        course_id: int,
+        actor_identifier: str,
+        created_at: str,
+    ) -> bool:
         with self._connection() as connection:
+            device = connection.execute(
+                self._sql("SELECT * FROM registered_devices WHERE student_id = ?"),
+                (student_id,),
+            ).fetchone()
+            if device is None:
+                return False
+            student = connection.execute(
+                self._sql("SELECT * FROM students WHERE id = ?"),
+                (student_id,),
+            ).fetchone()
+            course = connection.execute(
+                self._sql("SELECT * FROM courses WHERE id = ?"),
+                (course_id,),
+            ).fetchone()
+            if student is None:
+                raise ValueError("Student was not found.")
+            self._insert_device_audit_event(
+                connection,
+                student_id=student_id,
+                university_id=str(student["university_id"]),
+                student_name=str(student["full_name"]),
+                course_id=course_id,
+                course_code=str(course["code"]) if course is not None else "",
+                event_type="manager_device_reset",
+                actor_type="manager",
+                actor_identifier=actor_identifier,
+                previous_device_id=int(device["id"]),
+                previous_device_binding_hash=str(device["device_binding_hash"]),
+                new_device_id=None,
+                new_device_binding_hash=None,
+                created_at=created_at,
+            )
             cursor = connection.execute(
                 self._sql("DELETE FROM registered_devices WHERE student_id = ?"),
                 (student_id,),
             )
             return cursor.rowcount > 0
+
+    def record_device_registration_audit(
+        self,
+        *,
+        student_id: int,
+        course_id: int,
+        device_id: int,
+        device_binding_hash: str,
+        created_at: str,
+    ) -> None:
+        with self._connection() as connection:
+            student = connection.execute(
+                self._sql("SELECT * FROM students WHERE id = ?"),
+                (student_id,),
+            ).fetchone()
+            course = connection.execute(
+                self._sql("SELECT * FROM courses WHERE id = ?"),
+                (course_id,),
+            ).fetchone()
+            if student is None:
+                raise ValueError("Student was not found.")
+            self._insert_device_audit_event(
+                connection,
+                student_id=student_id,
+                university_id=str(student["university_id"]),
+                student_name=str(student["full_name"]),
+                course_id=course_id,
+                course_code=str(course["code"]) if course is not None else "",
+                event_type="student_device_registered",
+                actor_type="student",
+                actor_identifier=str(student["university_id"]),
+                previous_device_id=None,
+                previous_device_binding_hash=None,
+                new_device_id=device_id,
+                new_device_binding_hash=device_binding_hash,
+                created_at=created_at,
+            )
+
+    def list_device_audit_events(self, *, course_id: int, limit: int = 500) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT dae.*
+            FROM device_audit_events dae
+            WHERE dae.course_id = ?
+            ORDER BY dae.created_at DESC
+            LIMIT ?
+            """,
+            (course_id, limit),
+        )
 
     def find_attendance_for_device_window(
         self,
@@ -1008,6 +1153,13 @@ class AttendanceRepository:
                 connection.execute("ALTER TABLE otp_codes ADD COLUMN device_binding_hash TEXT")
             if "credential_id" not in otp_columns:
                 connection.execute("ALTER TABLE otp_codes ADD COLUMN credential_id TEXT")
+            if "schedule_id" not in otp_columns:
+                connection.execute(
+                    "ALTER TABLE otp_codes ADD COLUMN schedule_id BIGINT "
+                    "REFERENCES course_schedules(id) ON DELETE CASCADE"
+                )
+            if "attendance_date" not in otp_columns:
+                connection.execute("ALTER TABLE otp_codes ADD COLUMN attendance_date TEXT")
             attendance_columns = self._postgres_columns(connection, "attendance_records")
             if "registered_device_id" not in attendance_columns:
                 connection.execute(
@@ -1031,6 +1183,10 @@ class AttendanceRepository:
             connection.execute("ALTER TABLE otp_codes ADD COLUMN device_binding_hash TEXT")
         if "credential_id" not in otp_columns:
             connection.execute("ALTER TABLE otp_codes ADD COLUMN credential_id TEXT")
+        if "schedule_id" not in otp_columns:
+            connection.execute("ALTER TABLE otp_codes ADD COLUMN schedule_id INTEGER")
+        if "attendance_date" not in otp_columns:
+            connection.execute("ALTER TABLE otp_codes ADD COLUMN attendance_date TEXT")
         attendance_columns = self._sqlite_columns(connection, "attendance_records")
         if "registered_device_id" not in attendance_columns:
             connection.execute("ALTER TABLE attendance_records ADD COLUMN registered_device_id INTEGER")
@@ -1067,9 +1223,68 @@ class AttendanceRepository:
         )
         connection.execute(
             """
+            CREATE INDEX IF NOT EXISTS ix_device_audit_student_created
+            ON device_audit_events (student_id, created_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_device_audit_course_created
+            ON device_audit_events (course_id, created_at)
+            """
+        )
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS ix_proxy_alerts_course_created
             ON proxy_alerts (course_id, created_at)
             """
+        )
+
+    def _insert_device_audit_event(
+        self,
+        connection,
+        *,
+        student_id: int,
+        university_id: str,
+        student_name: str,
+        course_id: int | None,
+        course_code: str,
+        event_type: str,
+        actor_type: str,
+        actor_identifier: str,
+        previous_device_id: int | None,
+        previous_device_binding_hash: str | None,
+        new_device_id: int | None,
+        new_device_binding_hash: str | None,
+        created_at: str,
+    ) -> None:
+        connection.execute(
+            self._sql(
+                """
+                INSERT INTO device_audit_events (
+                    student_id, university_id, student_name, course_id, course_code,
+                    event_type, actor_type, actor_identifier, previous_device_id,
+                    previous_device_binding_hash, new_device_id, new_device_binding_hash,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            ),
+            (
+                student_id,
+                university_id,
+                student_name,
+                course_id,
+                course_code,
+                event_type,
+                actor_type,
+                actor_identifier,
+                previous_device_id,
+                previous_device_binding_hash,
+                new_device_id,
+                new_device_binding_hash,
+                created_at,
+            ),
         )
 
     def _fetchone(self, query: str, parameters: Iterable[Any] = ()) -> Record | None:
