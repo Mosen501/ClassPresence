@@ -18,7 +18,7 @@ Students sign in with a one-time password tied to the email address on their cou
 - One-student-per-device enforcement for every lecture window
 - Device resets blocked during live lectures with permanent manager audit history
 - Security incident log for blocked proxy attempts with manager review and device reset
-- Excel workbook export for course details, roster, timetable, attendance, and eligibility reports
+- End-to-end Excel reporting with executive summary, course details, roster and device status, timetable, attendance evidence, student performance, lecture analytics, security alerts, device audit, and OTP activity
 - Email-based OTP delivery, with a development-friendly console fallback
 - Geofenced attendance stamping within a configurable radius that defaults to 3 meters
 - Attendance records with timestamp, device information, and location distance checks
@@ -103,6 +103,7 @@ Copy `.env.example` values into your shell environment or deployment platform.
 - A student enrolls one device after the first successful OTP. Returning check-ins require that device's passkey before a new OTP is issued.
 - If a student replaces or clears a registered browser, a manager can reset the device from the Security page outside live lectures. Every reset and subsequent enrollment remains in the device audit history.
 - Passkey proof and OTP authorization are valid only for the current lecture. A new lecture always requires a fresh passkey check and a newly issued OTP.
+- Excel reports include complete report-safe activity without row caps. OTP values and hashes, passkey keys, credential IDs, and raw device-binding hashes are never exported.
 - The manager location picker uses OpenStreetMap tiles in the browser, so internet access helps the map render during local testing.
 - GPS accuracy can drift indoors. The app enforces the configured radius, but device-reported accuracy should still be reviewed during rollout.
 - The first run creates the database schema automatically for either SQLite or PostgreSQL.

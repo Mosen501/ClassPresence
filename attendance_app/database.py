@@ -473,7 +473,10 @@ class AttendanceRepository:
             SELECT
                 s.*,
                 rd.id AS registered_device_id,
-                rd.last_used_at AS device_last_used_at
+                rd.created_at AS device_registered_at,
+                rd.last_used_at AS device_last_used_at,
+                rd.credential_device_type AS device_type,
+                rd.credential_backed_up AS device_backed_up
             FROM students s
             INNER JOIN course_students cs ON cs.student_id = s.id
             LEFT JOIN registered_devices rd ON rd.student_id = s.id
@@ -877,6 +880,20 @@ class AttendanceRepository:
             (course_id, limit),
         )
 
+    def list_device_audit_events_for_report(self, *, course_id: int) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT
+                id, student_id, university_id, student_name, course_id, course_code,
+                event_type, actor_type, actor_identifier, previous_device_id,
+                new_device_id, created_at
+            FROM device_audit_events
+            WHERE course_id = ?
+            ORDER BY created_at DESC
+            """,
+            (course_id,),
+        )
+
     def find_attendance_for_device_window(
         self,
         *,
@@ -960,6 +977,39 @@ class AttendanceRepository:
             LIMIT ?
             """,
             (course_id, limit),
+        )
+
+    def list_proxy_alerts_for_report(self, *, course_id: int) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT
+                pa.id, pa.attendance_date, pa.alert_type, pa.severity, pa.message,
+                pa.device_binding_hash, pa.latitude, pa.longitude, pa.accuracy_m,
+                pa.created_at, pa.resolved_at, s.full_name, s.university_id,
+                cs.label AS schedule_label
+            FROM proxy_alerts pa
+            LEFT JOIN students s ON s.id = pa.student_id
+            LEFT JOIN course_schedules cs ON cs.id = pa.schedule_id
+            WHERE pa.course_id = ?
+            ORDER BY pa.created_at DESC
+            """,
+            (course_id,),
+        )
+
+    def list_otp_activity_for_report(self, *, course_id: int) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT
+                otp.id, otp.attendance_date, otp.delivery_method, otp.delivery_target,
+                otp.expires_at, otp.used_at, otp.invalidated_at, otp.created_at,
+                s.full_name, s.university_id, cs.label AS schedule_label
+            FROM otp_codes otp
+            INNER JOIN students s ON s.id = otp.student_id
+            LEFT JOIN course_schedules cs ON cs.id = otp.schedule_id
+            WHERE otp.course_id = ?
+            ORDER BY otp.created_at DESC
+            """,
+            (course_id,),
         )
 
     def resolve_proxy_alert(self, *, alert_id: int, resolved_at: str) -> bool:
@@ -1096,6 +1146,34 @@ class AttendanceRepository:
             LIMIT ?
             """,
             (course_id, limit),
+        )
+
+    def list_course_attendance_for_report(self, *, course_id: int) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT
+                ar.id AS attendance_id,
+                ar.schedule_id,
+                s.full_name,
+                s.university_id,
+                ar.attendance_date,
+                ar.stamped_at,
+                ar.student_latitude,
+                ar.student_longitude,
+                ar.distance_m,
+                ar.accuracy_m,
+                ar.registered_device_id,
+                ar.device_binding_hash,
+                cs.label AS schedule_label,
+                cs.start_time AS schedule_start_time,
+                cs.end_time AS schedule_end_time
+            FROM attendance_records ar
+            INNER JOIN students s ON s.id = ar.student_id
+            INNER JOIN course_schedules cs ON cs.id = ar.schedule_id
+            WHERE ar.course_id = ?
+            ORDER BY ar.stamped_at DESC
+            """,
+            (course_id,),
         )
 
     def _connect(self):

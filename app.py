@@ -772,9 +772,55 @@ def _cached_list_device_audit_events(
 
 
 @st.cache_data(
+    ttl=30,
+    max_entries=128,
+    show_spinner=False,
+    refresh_mode="background",
+)
+def _cached_report_attendance(database_target: str, course_id: int) -> list[dict]:
+    return AttendanceRepository(database_target).list_course_attendance_for_report(
+        course_id=course_id
+    )
+
+
+@st.cache_data(
+    ttl=30,
+    max_entries=128,
+    show_spinner=False,
+    refresh_mode="background",
+)
+def _cached_report_security_alerts(database_target: str, course_id: int) -> list[dict]:
+    return AttendanceRepository(database_target).list_proxy_alerts_for_report(
+        course_id=course_id
+    )
+
+
+@st.cache_data(
+    ttl=30,
+    max_entries=128,
+    show_spinner=False,
+    refresh_mode="background",
+)
+def _cached_report_device_audit(database_target: str, course_id: int) -> list[dict]:
+    return AttendanceRepository(database_target).list_device_audit_events_for_report(
+        course_id=course_id
+    )
+
+
+@st.cache_data(
+    ttl=30,
+    max_entries=128,
+    show_spinner=False,
+    refresh_mode="background",
+)
+def _cached_report_otp_activity(database_target: str, course_id: int) -> list[dict]:
+    return AttendanceRepository(database_target).list_otp_activity_for_report(course_id=course_id)
+
+
+@st.cache_data(
     ttl=300,
     max_entries=64,
-    show_spinner=False,
+    show_spinner="Preparing complete Excel report...",
     refresh_mode="background",
 )
 def _cached_course_report(
@@ -784,6 +830,9 @@ def _cached_course_report(
     schedules: list[dict],
     attendance_records: list[dict],
     eligibility_rows: list[dict[str, object]],
+    security_alerts: list[dict],
+    device_audit_events: list[dict],
+    otp_activity: list[dict],
     timezone_name: str,
 ) -> bytes:
     return build_course_report_xlsx(
@@ -792,6 +841,9 @@ def _cached_course_report(
         schedules=schedules,
         attendance_records=attendance_records,
         eligibility_rows=eligibility_rows,
+        security_alerts=security_alerts,
+        device_audit_events=device_audit_events,
+        otp_activity=otp_activity,
         generated_at=datetime.now(ZoneInfo(timezone_name)),
     )
 
@@ -1498,7 +1550,12 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
 
 @st.fragment
 def _render_manager_reports(repo: AttendanceRepository, settings, course) -> None:
-    _render_page_head("Course records", "Reports", "Eligibility, export, and workbook restore.", settings)
+    _render_page_head(
+        "Course records",
+        "Reports",
+        "Complete course, attendance, and security export.",
+        settings,
+    )
     if course is None:
         _empty_state("Select a course to generate reports.")
         return
@@ -1506,11 +1563,13 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
     course_id = int(course["id"])
     students = _cached_list_students(settings.database_target, course_id)
     schedules = _cached_list_schedules(settings.database_target, course_id)
-    attendance_records = _cached_list_course_attendance(
+    attendance_records = _cached_report_attendance(
         settings.database_target,
         course_id,
-        10000,
     )
+    security_alerts = _cached_report_security_alerts(settings.database_target, course_id)
+    device_audit_events = _cached_report_device_audit(settings.database_target, course_id)
+    otp_activity = _cached_report_otp_activity(settings.database_target, course_id)
     attendance_counts = _cached_attendance_counts(settings.database_target, course_id)
     eligibility_rows = _cached_eligibility_rows(
         database_target=settings.database_target,
@@ -1542,12 +1601,15 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
             schedules=schedules,
             attendance_records=attendance_records,
             eligibility_rows=eligibility_rows,
+            security_alerts=security_alerts,
+            device_audit_events=device_audit_events,
+            otp_activity=otp_activity,
             timezone_name=settings.app_timezone,
         )
         st.download_button(
-            "Download Excel report",
+            "Download complete Excel report",
             data=report_bytes,
-            file_name=f"{course['code']}_attendance_report.xlsx",
+            file_name=f"{course['code']}_complete_report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
             on_click="ignore",

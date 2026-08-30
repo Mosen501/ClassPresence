@@ -41,6 +41,9 @@ class PerformanceCacheTestCase(unittest.TestCase):
                 schedules=[],
                 attendance_records=[],
                 eligibility_rows=[],
+                security_alerts=[],
+                device_audit_events=[],
+                otp_activity=[],
                 timezone_name="UTC",
             )
             second = _cached_course_report(
@@ -49,6 +52,9 @@ class PerformanceCacheTestCase(unittest.TestCase):
                 schedules=[],
                 attendance_records=[],
                 eligibility_rows=[],
+                security_alerts=[],
+                device_audit_events=[],
+                otp_activity=[],
                 timezone_name="UTC",
             )
 

@@ -9,7 +9,6 @@ from openpyxl import load_workbook
 from attendance_app.database import AttendanceRepository
 from attendance_app.services import now_in_app_timezone
 
-
 WEEKDAY_MAP = {
     "Monday": 0,
     "Tuesday": 1,
@@ -44,41 +43,67 @@ def import_attendance_report_bytes(
     longitude = float(course_details["Longitude"])
     radius_m = float(course_details["Allowed Radius (m)"])
     absence_limit_pct = float(course_details["Absence Limit (%)"])
-    generated_at = _normalize_timestamp(course_details["Generated At"]) or now_in_app_timezone(
-        settings
-    ).isoformat()
+    generated_at = (
+        _normalize_timestamp(course_details["Generated At"])
+        or now_in_app_timezone(settings).isoformat()
+    )
 
-    eligibility_sheet = workbook["Eligibility"]
-    eligibility_rows = list(eligibility_sheet.iter_rows(min_row=2, values_only=True))
-    total_meetings = max(int(row[5]) for row in eligibility_rows if row and row[5] is not None)
+    if course_details.get("Total Meetings") not in (None, ""):
+        total_meetings = int(course_details["Total Meetings"])
+    else:
+        performance_sheet = _get_sheet(workbook, "Student Performance", "Eligibility")
+        performance_header_row, performance_headers = _find_header_row(
+            performance_sheet,
+            {"total meetings"},
+        )
+        total_meetings_index = performance_headers["total meetings"]
+        total_meetings = max(
+            int(row[total_meetings_index])
+            for row in performance_sheet.iter_rows(
+                min_row=performance_header_row + 1,
+                values_only=True,
+            )
+            if row and row[total_meetings_index] is not None
+        )
 
     roster_sheet = workbook["Roster"]
     roster_rows = []
-    for student_id, student_name, email, phone in roster_sheet.iter_rows(min_row=2, values_only=True):
+    roster_header_row, roster_headers = _find_header_row(
+        roster_sheet,
+        {"student id", "student name", "email", "phone"},
+    )
+    for row in roster_sheet.iter_rows(min_row=roster_header_row + 1, values_only=True):
+        student_id = row[roster_headers["student id"]]
         if student_id is None:
             continue
         roster_rows.append(
             {
                 "university_id": _normalize(student_id),
-                "full_name": _normalize(student_name),
-                "email": _normalize(email),
-                "phone": _normalize(phone),
+                "full_name": _normalize(row[roster_headers["student name"]]),
+                "email": _normalize(row[roster_headers["email"]]),
+                "phone": _normalize_phone(row[roster_headers["phone"]]),
             }
         )
 
     timetable_sheet = workbook["Timetable"]
     schedule_rows = []
-    for weekday_name, label, start_time, end_time in timetable_sheet.iter_rows(
-        min_row=2, values_only=True
+    timetable_header_row, timetable_headers = _find_header_row(
+        timetable_sheet,
+        {"weekday", "window label", "start time", "end time"},
+    )
+    for row in timetable_sheet.iter_rows(
+        min_row=timetable_header_row + 1,
+        values_only=True,
     ):
+        weekday_name = row[timetable_headers["weekday"]]
         if weekday_name is None:
             continue
         schedule_rows.append(
             {
                 "weekday": WEEKDAY_MAP[_normalize(weekday_name)],
-                "label": _normalize(label),
-                "start_time": _normalize(start_time),
-                "end_time": _normalize(end_time),
+                "label": _normalize(row[timetable_headers["window label"]]),
+                "start_time": _normalize(row[timetable_headers["start time"]]),
+                "end_time": _normalize(row[timetable_headers["end time"]]),
             }
         )
 
@@ -133,7 +158,15 @@ def import_attendance_report_bytes(
         for row in repo.list_schedules_for_course(course_id)
     }
 
-    attendance_sheet = workbook["Attendance"]
+    attendance_sheet = _get_sheet(workbook, "Attendance Records", "Attendance")
+    attendance_header_row, attendance_headers = _find_header_row(
+        attendance_sheet,
+        {"student id", "date", "distance (m)"},
+    )
+    lecture_header = "lecture" if "lecture" in attendance_headers else "window"
+    timestamp_header = "checked in" if "checked in" in attendance_headers else "stamped at"
+    if lecture_header not in attendance_headers or timestamp_header not in attendance_headers:
+        raise ValueError("The attendance sheet is missing lecture or timestamp columns.")
     imported_attendance = 0
     skipped_attendance = 0
     placeholder_device_info = json.dumps(
@@ -145,11 +178,17 @@ def import_attendance_report_bytes(
         ensure_ascii=False,
     )
 
-    for _student_name, student_id, attendance_date, window_label, stamped_at, distance_m in attendance_sheet.iter_rows(
-        min_row=2, values_only=True
+    for row in attendance_sheet.iter_rows(
+        min_row=attendance_header_row + 1,
+        values_only=True,
     ):
+        student_id = row[attendance_headers["student id"]]
         if student_id is None:
             continue
+        attendance_date = row[attendance_headers["date"]]
+        window_label = row[attendance_headers[lecture_header]]
+        stamped_at = row[attendance_headers[timestamp_header]]
+        distance_m = row[attendance_headers["distance (m)"]]
 
         university_id = _normalize(student_id)
         student = students_by_university_id.get(university_id)
@@ -199,7 +238,10 @@ def import_attendance_report_bytes(
 def _normalize(value) -> str:
     if value is None:
         return ""
-    return str(value).strip()
+    text = str(value).strip()
+    if text.startswith("'") and text[1:2] in {"=", "+", "-", "@"}:
+        return text[1:]
+    return text
 
 
 def _coerce_date(value) -> date:
@@ -233,3 +275,34 @@ def _normalize_timestamp(value) -> str:
     if isinstance(value, datetime):
         return value.isoformat()
     return _normalize(value)
+
+
+def _get_sheet(workbook, *names: str):
+    for name in names:
+        if name in workbook.sheetnames:
+            return workbook[name]
+    raise ValueError(f"The workbook is missing a required sheet: {' or '.join(names)}.")
+
+
+def _find_header_row(sheet, required_headers: set[str]) -> tuple[int, dict[str, int]]:
+    for row_number, row in enumerate(
+        sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 25), values_only=True),
+        start=1,
+    ):
+        headers = {
+            _normalize_header(value): index
+            for index, value in enumerate(row)
+            if value not in (None, "")
+        }
+        if required_headers.issubset(headers):
+            return row_number, headers
+    raise ValueError(f"The {sheet.title} sheet is missing required report columns.")
+
+
+def _normalize_header(value) -> str:
+    return " ".join(_normalize(value).lower().split())
+
+
+def _normalize_phone(value) -> str:
+    text = _normalize(value)
+    return text[4:] if text.lower().startswith("tel:") else text
