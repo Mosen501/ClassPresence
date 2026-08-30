@@ -7,7 +7,7 @@
     <style>
       body {
         margin: 0;
-        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+        font-family: "Noto Kufi Arabic", "Tahoma", "Space Grotesk", "Segoe UI", sans-serif;
         background: transparent;
         color: #f4f7fb;
       }
@@ -42,6 +42,33 @@
       const button = document.getElementById("passkeyButton");
       const statusText = document.getElementById("statusText");
       let componentArgs = null;
+      let locale = "en";
+      const messages = {
+        en: {
+          register: "Register this device",
+          verify: "Verify this device",
+          description: "Your passkey confirms this registered device.",
+          unsupported: "Passkeys are not supported by this browser.",
+          waiting: "Waiting for device confirmation...",
+          verified: "Device verified.",
+          failed: "Device verification failed.",
+          incomplete: "Device verification was not completed.",
+        },
+        ar: {
+          register: "تسجيل هذا الجهاز",
+          verify: "التحقق من هذا الجهاز",
+          description: "يؤكد مفتاح المرور هوية الجهاز المسجل.",
+          unsupported: "هذا المتصفح لا يدعم مفتاح المرور.",
+          waiting: "بانتظار تأكيد الجهاز...",
+          verified: "تم التحقق من الجهاز.",
+          failed: "تعذر التحقق من الجهاز.",
+          incomplete: "لم يكتمل التحقق من الجهاز.",
+        },
+      };
+
+      function copy(key) {
+        return messages[locale][key];
+      }
 
       function send(type, data) {
         window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), "*");
@@ -126,9 +153,14 @@
       window.addEventListener("message", (event) => {
         if (event.data.type !== "streamlit:render") return;
         componentArgs = event.data.args;
+        locale = componentArgs.locale === "ar" ? "ar" : "en";
+        document.documentElement.lang = locale;
+        document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
+        document.body.dir = document.documentElement.dir;
         button.textContent = componentArgs.action === "register"
-          ? "Register this device"
-          : "Verify this device";
+          ? copy("register")
+          : copy("verify");
+        statusText.textContent = copy("description");
         setHeight();
       });
 
@@ -136,12 +168,12 @@
         if (!componentArgs || !window.PublicKeyCredential || !navigator.credentials) {
           setValue({
             operation_id: componentArgs?.operationId,
-            error: "Passkeys are not supported by this browser.",
+            error: copy("unsupported"),
           });
           return;
         }
         button.disabled = true;
-        statusText.textContent = "Waiting for device confirmation...";
+        statusText.textContent = copy("waiting");
         setHeight();
         try {
           const action = componentArgs.action;
@@ -160,15 +192,15 @@
             origin: window.location.origin,
             hostname: window.location.hostname,
           });
-          statusText.textContent = "Device verified.";
+          statusText.textContent = copy("verified");
         } catch (error) {
           setValue({
             operation_id: componentArgs.operationId,
             action: componentArgs.action,
             device_token: deviceToken(),
-            error: error.message || "Device verification failed.",
+            error: locale === "ar" ? copy("failed") : error.message || copy("failed"),
           });
-          statusText.textContent = "Device verification was not completed.";
+          statusText.textContent = copy("incomplete");
         } finally {
           button.disabled = false;
           setHeight();

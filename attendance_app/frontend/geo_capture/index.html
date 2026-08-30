@@ -7,7 +7,7 @@
     <style>
       body {
         margin: 0;
-        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+        font-family: "Noto Kufi Arabic", "Tahoma", "Space Grotesk", "Segoe UI", sans-serif;
         background: transparent;
         color: #f4f7fb;
       }
@@ -52,6 +52,31 @@
     <script>
       const button = document.getElementById("captureButton");
       const statusText = document.getElementById("statusText");
+      let locale = "en";
+      const messages = {
+        en: {
+          description: "Location is used to confirm classroom distance.",
+          unsupported: "This browser does not support geolocation.",
+          requesting: "Requesting device location...",
+          captured: "Location captured. The app will validate the attendance stamp now.",
+          unavailable: "Unable to retrieve your location.",
+          denied: "Location access was denied. Allow location access and try again.",
+          timeout: "Location request timed out. Try again.",
+        },
+        ar: {
+          description: "يُستخدم الموقع للتحقق من وجودك داخل القاعة.",
+          unsupported: "هذا المتصفح لا يدعم تحديد الموقع.",
+          requesting: "جارٍ تحديد موقع الجهاز...",
+          captured: "تم تحديد الموقع وسيتم التحقق منه الآن.",
+          unavailable: "تعذر تحديد موقعك. حاول مرة أخرى.",
+          denied: "تم رفض الوصول إلى الموقع. اسمح بالوصول ثم حاول مرة أخرى.",
+          timeout: "انتهت مهلة تحديد الموقع. حاول مرة أخرى.",
+        },
+      };
+
+      function copy(key) {
+        return messages[locale][key];
+      }
 
       function sendMessageToStreamlitClient(type, data) {
         const payload = Object.assign(
@@ -96,14 +121,19 @@
         if (event.data.type !== "streamlit:render") {
           return;
         }
+        locale = event.data.args.locale === "ar" ? "ar" : "en";
+        document.documentElement.lang = locale;
+        document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
+        document.body.dir = document.documentElement.dir;
         const buttonLabel = event.data.args.buttonLabel || "Share location";
         button.textContent = buttonLabel;
+        setStatus(copy("description"));
         setFrameHeight(document.body.scrollHeight);
       });
 
       button.addEventListener("click", () => {
         if (!navigator.geolocation) {
-          const errorMessage = "This browser does not support geolocation.";
+          const errorMessage = copy("unsupported");
           setStatus(errorMessage);
           setComponentValue({
             error: errorMessage,
@@ -113,7 +143,7 @@
         }
 
         button.disabled = true;
-        setStatus("Requesting device location...");
+        setStatus(copy("requesting"));
 
         navigator.geolocation.getCurrentPosition(
           (position) => {
@@ -130,12 +160,16 @@
               screen_height: window.screen.height,
               device_token: deviceToken(),
             };
-            setStatus("Location captured. The app will validate the attendance stamp now.");
+            setStatus(copy("captured"));
             setComponentValue(payload);
             button.disabled = false;
           },
           (error) => {
-            const message = error.message || "Unable to retrieve your location.";
+            const message = error.code === 1
+              ? copy("denied")
+              : error.code === 3
+                ? copy("timeout")
+                : copy("unavailable");
             setStatus(message);
             setComponentValue({
               error: message,

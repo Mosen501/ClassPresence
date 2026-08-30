@@ -36,7 +36,7 @@ from attendance_app.utils import parse_hhmm, parse_iso_date, weekday_label
 
 APP_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Kufi+Arabic:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 :root {
     --cp-bg: #080b10;
@@ -59,7 +59,7 @@ APP_CSS = """
 }
 
 html, body, [class*="css"] {
-    font-family: 'Space Grotesk', sans-serif;
+    font-family: 'Space Grotesk', 'Noto Kufi Arabic', sans-serif;
     color: var(--cp-text);
 }
 
@@ -273,6 +273,17 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
     margin: 0;
     color: var(--cp-muted);
     font-size: 0.88rem;
+}
+
+.cp-role-card-ar {
+    direction: rtl;
+    text-align: right;
+}
+
+.cp-role-card-ar *,
+.cp-role-card-ar .cp-role-index {
+    font-family: 'Noto Kufi Arabic', 'Tahoma', sans-serif;
+    letter-spacing: 0;
 }
 
 .cp-toolbar {
@@ -499,7 +510,7 @@ div[data-testid="stFormSubmitButton"] > button {
     border-radius: 11px !important;
     background: var(--cp-panel-3) !important;
     color: var(--cp-text) !important;
-    font-family: 'Space Grotesk', sans-serif !important;
+    font-family: 'Space Grotesk', 'Noto Kufi Arabic', sans-serif !important;
     font-weight: 600 !important;
     transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
@@ -585,6 +596,66 @@ hr { border-color: var(--cp-line-soft) !important; }
 </style>
 """
 
+STUDENT_RTL_CSS = """
+<style>
+.block-container {
+    direction: rtl;
+    text-align: right;
+}
+
+.block-container,
+.block-container button,
+.block-container input,
+.block-container label,
+.block-container p,
+.block-container h1,
+.block-container h2,
+.block-container h3,
+.block-container h4,
+.block-container span,
+.block-container small {
+    font-family: 'Noto Kufi Arabic', 'Tahoma', sans-serif !important;
+}
+
+.block-container h1,
+.block-container h2,
+.block-container h3,
+.block-container h4,
+.block-container .cp-eyebrow,
+.block-container .cp-metric span,
+.block-container .cp-section-title span {
+    letter-spacing: 0;
+}
+
+.cp-top-meta,
+.cp-date-block {
+    text-align: left;
+}
+
+.cp-ltr,
+.cp-code,
+.block-container input,
+.block-container textarea {
+    direction: ltr;
+    unicode-bidi: isolate;
+}
+
+.block-container input,
+.block-container textarea {
+    text-align: left;
+}
+
+[data-testid="stWidgetLabel"],
+[data-testid="stAlert"],
+[data-testid="stDataFrame"],
+[data-testid="stButtonGroup"] {
+    direction: rtl;
+    text-align: right;
+}
+</style>
+<span class="cp-student-ui" lang="ar" dir="rtl" aria-hidden="true"></span>
+"""
+
 
 TIMETABLE_DAY_COLUMNS = [
     ("Monday", 0),
@@ -616,6 +687,69 @@ MANAGER_SECTIONS = [
     "Reports",
 ]
 STUDENT_SECTIONS = ["Check in", "Status", "History"]
+STUDENT_SECTION_LABELS = {
+    "Check in": "تسجيل الحضور",
+    "Status": "الحالة",
+    "History": "السجل",
+}
+ARABIC_WEEKDAYS = [
+    "الاثنين",
+    "الثلاثاء",
+    "الأربعاء",
+    "الخميس",
+    "الجمعة",
+    "السبت",
+    "الأحد",
+]
+ARABIC_MONTHS = [
+    "يناير",
+    "فبراير",
+    "مارس",
+    "أبريل",
+    "مايو",
+    "يونيو",
+    "يوليو",
+    "أغسطس",
+    "سبتمبر",
+    "أكتوبر",
+    "نوفمبر",
+    "ديسمبر",
+]
+STUDENT_MESSAGE_TRANSLATIONS = {
+    "Student ID was not found in any course roster.": "الرقم الجامعي غير موجود في قوائم المقررات.",
+    "This device is already registered to another student.": "هذا الجهاز مسجل لطالب آخر.",
+    "Use your registered device or ask the manager to reset it.": "استخدم جهازك المسجل أو اطلب من المسؤول إعادة تعيينه.",
+    "Student access context is no longer valid.": "انتهت صلاحية طلب الدخول. ابدأ من جديد.",
+    "Verify the registered device before requesting a code.": "تحقق من الجهاز المسجل قبل طلب الرمز.",
+    "The verified passkey does not match this student device.": "مفتاح المرور لا يطابق جهاز الطالب المسجل.",
+    "Verify the passkey again for this lecture window.": "أعد التحقق من مفتاح المرور لهذه المحاضرة.",
+    "This verification belongs to a different lecture window.": "هذا التحقق مرتبط بمحاضرة أخرى.",
+    "No active login code was found. Generate a new code.": "لا يوجد رمز تحقق فعال. اطلب رمزاً جديداً.",
+    "This code belongs to a different lecture window. Request a new code.": "هذا الرمز مرتبط بمحاضرة أخرى. اطلب رمزاً جديداً.",
+    "This code must be verified on the device that requested it.": "يجب إدخال الرمز على الجهاز الذي طلبه.",
+    "This code is not bound to the verified passkey.": "الرمز غير مرتبط بمفتاح المرور الذي تم التحقق منه.",
+    "The one-time code is invalid.": "رمز التحقق غير صحيح.",
+    "Device identity changed. Start the check-in again.": "تغيرت هوية الجهاز. ابدأ تسجيل الحضور من جديد.",
+    "This student already has a registered device.": "يوجد جهاز مسجل لهذا الطالب بالفعل.",
+    "No registered device was found for this student.": "لم يتم العثور على جهاز مسجل لهذا الطالب.",
+    "This is not the registered browser for this student.": "هذا المتصفح غير مسجل لهذا الطالب.",
+    "This browser could not provide a valid device identity.": "تعذر التحقق من هوية هذا الجهاز.",
+    "The passkey does not match the registered device.": "مفتاح المرور لا يطابق الجهاز المسجل.",
+    "Location verification data is incomplete. Capture location again.": "بيانات الموقع غير مكتملة. أعد تحديد الموقع.",
+    "The device returned invalid location coordinates.": "تعذر التحقق من إحداثيات الموقع.",
+    "The location timestamp is invalid. Capture location again.": "بيانات وقت الموقع غير صالحة. أعد تحديد الموقع.",
+    "The location timestamp must include a timezone.": "بيانات وقت الموقع غير مكتملة. أعد تحديد الموقع.",
+    "Location expired. Capture a fresh classroom location.": "انتهت صلاحية الموقع. حدد موقعك داخل القاعة مرة أخرى.",
+    "Attendance is not available because this course is outside its active dates.": "تسجيل الحضور غير متاح خارج فترة المقرر.",
+    "Attendance is closed right now. Try again during an approved schedule window.": "تسجيل الحضور مغلق الآن.",
+    "Verify your registered passkey before submitting attendance.": "تحقق من مفتاح المرور قبل تسجيل الحضور.",
+    "Your lecture verification has expired. Verify passkey and OTP again.": "انتهت صلاحية التحقق للمحاضرة. أعد التحقق من الجهاز والرمز.",
+    "Attendance must be submitted from the verified device.": "يجب تسجيل الحضور من الجهاز الذي تم التحقق منه.",
+    "Attendance has already been stamped for this schedule window.": "تم تسجيل حضورك لهذه المحاضرة مسبقاً.",
+    "This device has already been used for another student in this lecture.": "تم استخدام هذا الجهاز لطالب آخر في هذه المحاضرة.",
+    "This device has already been used in this lecture.": "تم استخدام هذا الجهاز في هذه المحاضرة مسبقاً.",
+    "A one-time code has been generated and shown on this page.": "تم إنشاء رمز التحقق وعرضه في هذه الصفحة.",
+}
 
 
 @st.cache_data(
@@ -937,15 +1071,15 @@ def _render_role_home(settings) -> None:
     with student_col:
         st.markdown(
             """
-            <div class="cp-role-card">
-                <span class="cp-role-index">01 / STUDENT</span>
-                <h3>Check in to class</h3>
-                <p>Student ID, location, and one-time code.</p>
+            <div class="cp-role-card cp-role-card-ar" lang="ar" dir="rtl">
+                <span class="cp-role-index">٠١ / بوابة الطالب</span>
+                <h3>تسجيل الحضور</h3>
+                <p>الرقم الجامعي والموقع ورمز التحقق.</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Start check-in", key="open_student", type="primary", width="stretch"):
+        if st.button("الدخول إلى بوابة الطالب", key="open_student", type="primary", width="stretch"):
             st.session_state["active_role"] = "student"
             st.rerun()
     with manager_col:
@@ -1641,6 +1775,7 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
 
 
 def _render_student_entry(repo: AttendanceRepository, settings) -> None:
+    st.markdown(STUDENT_RTL_CSS, unsafe_allow_html=True)
     if st.session_state.get("student_auth") is None:
         _render_student_access(repo, settings)
         return
@@ -1650,26 +1785,36 @@ def _render_student_entry(repo: AttendanceRepository, settings) -> None:
 @st.fragment
 def _render_student_access(repo: AttendanceRepository, settings) -> None:
     _apply_pending_student_id_reset()
-    _render_topbar(settings, context="Student check-in")
-    left, center, right = st.columns([0.2, 1, 0.2], gap="large")
+    _render_topbar(settings, context="بوابة الطالب", arabic=True)
+    _left, center, _right = st.columns([0.2, 1, 0.2], gap="large")
     with center:
         notice = st.session_state.pop("student_access_notice", None)
         if notice:
-            st.warning(notice)
-        _render_page_head("Student access", "Check in", "Enter your student ID and verify your classroom location.", settings)
+            st.warning(_student_message(notice))
+        _render_page_head(
+            "دخول الطالب",
+            "تسجيل الحضور",
+            "أدخل رقمك الجامعي ثم تحقق من موقع القاعة.",
+            settings,
+            arabic=True,
+        )
         delivery_error = otp_delivery_configuration_error(settings)
         if delivery_error:
-            st.warning(delivery_error)
+            st.warning(_student_message(delivery_error))
 
         access_context = st.session_state.get("student_access_context")
         if access_context is None:
             with st.container(border=True):
                 university_id = st.text_input(
-                    "Student ID",
+                    "الرقم الجامعي",
                     key="pending_university_id",
-                    placeholder="Student ID",
+                    placeholder="أدخل الرقم الجامعي",
                 )
-                student_geo = geo_capture("Verify classroom location", key="student_access_location")
+                student_geo = geo_capture(
+                    "التحقق من موقع القاعة",
+                    key="student_access_location",
+                    locale="ar",
+                )
                 _handle_student_access_location(student_geo, repo, settings, university_id)
         else:
             _render_access_card(access_context)
@@ -1683,28 +1828,28 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
                     access_context,
                     action="authenticate",
                 )
-                if st.button("Use another student ID", key="reset_student_access", width="stretch"):
+                if st.button("استخدام رقم جامعي آخر", key="reset_student_access", width="stretch"):
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
             elif not st.session_state.get("student_otp_requested", False):
-                if st.button("Send one-time code", key="request_student_otp", type="primary", width="stretch"):
+                if st.button("إرسال رمز التحقق", key="request_student_otp", type="primary", width="stretch"):
                     _request_student_otp(repo, settings, access_context)
-                if st.button("Use another student ID", key="reset_student_access", width="stretch"):
+                if st.button("استخدام رقم جامعي آخر", key="reset_student_access", width="stretch"):
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
             elif not st.session_state.get("student_otp_verified", False):
                 notice = st.session_state.get("student_otp_notice")
                 if notice:
-                    st.success(notice)
+                    st.success(_student_message(notice))
                 preview = st.session_state.get("student_otp_preview_code")
                 if preview:
                     st.markdown(f'<div class="cp-code">{escape(preview)}</div>', unsafe_allow_html=True)
                 with st.form("student_otp_form", border=True):
-                    code = st.text_input("One-time code", max_chars=6, placeholder="000000")
-                    verify = st.form_submit_button("Continue", type="primary", width="stretch")
+                    code = st.text_input("رمز التحقق", max_chars=6, placeholder="000000")
+                    verify = st.form_submit_button("متابعة", type="primary", width="stretch")
                 if verify:
                     _verify_student_otp(repo, settings, access_context, code)
-                if st.button("Start again", key="student_start_again", width="stretch"):
+                if st.button("البدء من جديد", key="student_start_again", width="stretch"):
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
             else:
@@ -1714,11 +1859,11 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
                     access_context,
                     action="register",
                 )
-                if st.button("Start again", key="student_registration_restart", width="stretch"):
+                if st.button("البدء من جديد", key="student_registration_restart", width="stretch"):
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
 
-        if st.button("Back", key="student_access_back", width="stretch"):
+        if st.button("رجوع", key="student_access_back", width="stretch"):
             _reset_student_access(clear_id=True)
             st.session_state["active_role"] = None
             st.rerun()
@@ -1736,20 +1881,21 @@ def _render_student_portal(repo: AttendanceRepository, settings) -> None:
         _expire_student_session()
         st.rerun()
 
-    _render_topbar(settings, context=f"{course['code']} · {student['full_name']}")
+    _render_topbar(settings, context=f"{course['code']} · {student['full_name']}", arabic=True)
     section = _normalize_state_choice("student_section", STUDENT_SECTIONS)
     nav_col, exit_col = st.columns([1, 0.16], gap="small")
     with nav_col:
         selected = st.pills(
-            "Student navigation",
+            "تنقل الطالب",
             STUDENT_SECTIONS,
             key="student_section",
+            format_func=lambda value: STUDENT_SECTION_LABELS[value],
             label_visibility="collapsed",
             width="stretch",
         )
         section = selected or STUDENT_SECTIONS[0]
     with exit_col:
-        if st.button("Exit", key="student_exit", width="stretch"):
+        if st.button("خروج", key="student_exit", width="stretch"):
             _sign_out_student()
             st.rerun()
 
@@ -1773,21 +1919,27 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
     except ValueError:
         _expire_student_session()
         st.rerun()
-    _render_page_head("Attendance window", "Check in", f"{course['code']} · {course['title']}", settings)
+    _render_page_head(
+        "نافذة الحضور",
+        "تسجيل الحضور",
+        f"{course['code']} · {course['title']}",
+        settings,
+        arabic=True,
+    )
     if active_schedule is None:
         _closed_check_in(repo, settings, course)
         return
 
     st.markdown(
         f"""
-        <div class="cp-access-card">
-            <span class="cp-eyebrow">Window open</span>
-            <h3>{escape(str(active_schedule['label']))}</h3>
-            <p>{escape(str(active_schedule['start_time']))}–{escape(str(active_schedule['end_time']))}</p>
+        <div class="cp-access-card" lang="ar" dir="rtl">
+            <span class="cp-eyebrow">نافذة الحضور متاحة</span>
+            <h3><bdi>{escape(str(active_schedule['label']))}</bdi></h3>
+            <p class="cp-ltr">{escape(str(active_schedule['start_time']))}–{escape(str(active_schedule['end_time']))}</p>
             <div class="cp-access-grid">
-                <div><span>Course</span><strong>{escape(str(course['code']))}</strong></div>
-                <div><span>Student</span><strong>{escape(str(student['university_id']))}</strong></div>
-                <div><span>Radius</span><strong>{float(course['radius_m']):.0f} m</strong></div>
+                <div><span>المقرر</span><strong class="cp-ltr">{escape(str(course['code']))}</strong></div>
+                <div><span>الطالب</span><strong class="cp-ltr">{escape(str(student['university_id']))}</strong></div>
+                <div><span>النطاق</span><strong><bdi>{float(course['radius_m']):.0f} متر</bdi></strong></div>
             </div>
         </div>
         """,
@@ -1795,43 +1947,51 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
     )
     check_col, info_col = st.columns([1, 0.65], gap="large")
     with check_col:
-        _render_section_title("Confirm location", "Required")
-        stamp_geo = geo_capture("Capture current location", key="student_stamp_location")
+        _render_section_title("تأكيد الموقع", "مطلوب")
+        stamp_geo = geo_capture(
+            "تحديد موقعي الحالي",
+            key="student_stamp_location",
+            locale="ar",
+        )
         _handle_stamp_location(stamp_geo)
-        if st.session_state.get("student_stamp_geolocation") is not None:
-            if st.button("Submit attendance", key="submit_attendance", type="primary", width="stretch"):
-                result = stamp_attendance(
-                    repo,
-                    settings,
-                    course=course,
-                    student=student,
-                    geolocation_payload=st.session_state["student_stamp_geolocation"],
-                    verified_device={
-                        "device_id": auth.get("device_id"),
-                        "credential_id": auth.get("credential_id"),
-                        "device_binding_hash": auth.get("device_binding_hash"),
-                        "schedule_id": auth.get("schedule_id"),
-                        "attendance_date": auth.get("attendance_date"),
-                        "session_expires_at": auth.get("session_expires_at"),
-                    },
-                )
-                st.session_state["student_stamp_result"] = {
-                    "success": result.success,
-                    "message": result.message,
-                }
-                if result.success:
-                    _invalidate_read_caches()
-                    st.session_state["student_stamp_geolocation"] = None
-                st.rerun()
+        if st.session_state.get("student_stamp_geolocation") is not None and st.button(
+            "تسجيل الحضور",
+            key="submit_attendance",
+            type="primary",
+            width="stretch",
+        ):
+            result = stamp_attendance(
+                repo,
+                settings,
+                course=course,
+                student=student,
+                geolocation_payload=st.session_state["student_stamp_geolocation"],
+                verified_device={
+                    "device_id": auth.get("device_id"),
+                    "credential_id": auth.get("credential_id"),
+                    "device_binding_hash": auth.get("device_binding_hash"),
+                    "schedule_id": auth.get("schedule_id"),
+                    "attendance_date": auth.get("attendance_date"),
+                    "session_expires_at": auth.get("session_expires_at"),
+                },
+            )
+            st.session_state["student_stamp_result"] = {
+                "success": result.success,
+                "message": result.message,
+            }
+            if result.success:
+                _invalidate_read_caches()
+                st.session_state["student_stamp_geolocation"] = None
+            st.rerun()
         result = st.session_state.get("student_stamp_result")
         if result:
             css_class = "cp-result-ok" if result["success"] else "cp-result-bad"
             st.markdown(
-                f'<div class="{css_class}">{escape(str(result["message"]))}</div>',
+                f'<div class="{css_class}">{escape(_student_message(result["message"]))}</div>',
                 unsafe_allow_html=True,
             )
     with info_col:
-        _render_section_title("Today", "Current status")
+        _render_section_title("اليوم", "الحالة الحالية")
         existing = _cached_attendance_exists(
             settings.database_target,
             int(course["id"]),
@@ -1841,15 +2001,21 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
         )
         _render_metrics(
             [
-                ("Status", "Present" if existing else "Pending", active_schedule["label"]),
-                ("Closes", active_schedule["end_time"], settings.app_timezone),
+                ("الحالة", "حاضر" if existing else "بانتظار التسجيل", active_schedule["label"]),
+                ("ينتهي", active_schedule["end_time"], settings.app_timezone),
             ],
             compact=True,
         )
 
 
 def _render_student_status(repo, settings, course, student, active_schedule) -> None:
-    _render_page_head("Course standing", "Status", f"{course['code']} · {student['full_name']}", settings)
+    _render_page_head(
+        "حالة المقرر",
+        "الحالة",
+        f"{course['code']} · {student['full_name']}",
+        settings,
+        arabic=True,
+    )
     course_id = int(course["id"])
     schedules = _cached_list_schedules(settings.database_target, course_id)
     attendance_counts = _cached_attendance_counts(settings.database_target, course_id)
@@ -1863,28 +2029,37 @@ def _render_student_status(repo, settings, course, student, active_schedule) -> 
     )
     _render_metrics(
         [
-            ("Attended", summary.attended_count, "verified meetings"),
-            ("Absences", summary.absences, "elapsed meetings"),
-            ("Meetings", summary.total_meetings, "course total"),
+            ("مرات الحضور", summary.attended_count, "محاضرات موثقة"),
+            ("الغيابات", summary.absences, "من المحاضرات المنتهية"),
+            ("المحاضرات", summary.total_meetings, "إجمالي المقرر"),
             (
-                "Exam status",
-                "Not eligible" if summary.denied_exam_entry else "Eligible",
-                f"{summary.absence_threshold} absence limit",
+                "أهلية الاختبار",
+                "غير مؤهل" if summary.denied_exam_entry else "مؤهل",
+                f"حد الغياب {summary.absence_threshold}",
             ),
         ]
     )
-    _render_section_title("Attendance progress", f"{summary.attendance_pct_of_total:.0f}% of course")
+    _render_section_title(
+        "تقدم الحضور",
+        f"{summary.attendance_pct_of_total:.0f}% من المقرر",
+    )
     st.progress(min(max(summary.attendance_pct_of_total / 100, 0.0), 1.0))
     if summary.denied_exam_entry:
-        st.error("The absence limit has been reached.")
+        st.error("تم بلوغ حد الغياب.")
     elif active_schedule is not None:
-        st.success(f"{active_schedule['label']} is open now.")
+        st.success(f"نافذة {active_schedule['label']} متاحة الآن.")
     else:
-        st.info("No attendance window is open right now.")
+        st.info("لا توجد نافذة حضور متاحة الآن.")
 
 
 def _render_student_history(repo, settings, course, student) -> None:
-    _render_page_head("Verified record", "History", f"{course['code']} · {student['full_name']}", settings)
+    _render_page_head(
+        "السجل الموثق",
+        "سجل الحضور",
+        f"{course['code']} · {student['full_name']}",
+        settings,
+        arabic=True,
+    )
     records = _cached_list_student_attendance(
         settings.database_target,
         int(course["id"]),
@@ -1892,15 +2067,15 @@ def _render_student_history(repo, settings, course, student) -> None:
         1000,
     )
     if not records:
-        _empty_state("No attendance records yet.")
+        _empty_state("لا توجد سجلات حضور حتى الآن.")
         return
     st.dataframe(
         [
             {
-                "Date": row["attendance_date"],
-                "Window": row["schedule_label"],
-                "Time": str(row["stamped_at"])[11:16],
-                "Distance": f"{float(row['distance_m']):.2f} m",
+                "التاريخ": row["attendance_date"],
+                "المحاضرة": row["schedule_label"],
+                "الوقت": str(row["stamped_at"])[11:16],
+                "المسافة": f"{float(row['distance_m']):.2f} متر",
             }
             for row in records
         ],
@@ -1926,49 +2101,70 @@ def _closed_check_in(repo, settings, course) -> None:
             break
     st.markdown(
         """
-        <div class="cp-result-bad">Check-in is closed. Status and history remain available.</div>
+        <div class="cp-result-bad">تسجيل الحضور مغلق الآن. يمكنك مراجعة الحالة والسجل.</div>
         """,
         unsafe_allow_html=True,
     )
     if upcoming:
-        next_date, next_schedule = sorted(upcoming, key=lambda item: str(item[1]["start_time"]))[0]
+        next_date, next_schedule = min(
+            upcoming,
+            key=lambda item: str(item[1]["start_time"]),
+        )
         _render_metrics(
             [
-                ("Next window", next_schedule["label"], weekday_label(next_date.weekday())),
-                ("Starts", next_schedule["start_time"], next_date.strftime("%b %d")),
+                ("النافذة التالية", next_schedule["label"], _arabic_weekday(next_date.weekday())),
+                ("تبدأ", next_schedule["start_time"], _arabic_short_date(next_date)),
             ],
             compact=True,
         )
 
 
-def _render_topbar(settings, *, context: str) -> None:
+def _render_topbar(settings, *, context: str, arabic: bool = False) -> None:
     now = now_in_app_timezone(settings)
+    language_attributes = ' lang="ar" dir="rtl"' if arabic else ""
+    timestamp = (
+        f"{_arabic_weekday(now.weekday())} · {now.day:02d} "
+        f"{ARABIC_MONTHS[now.month - 1]} {now.year} · {now.strftime('%H:%M')}"
+        if arabic
+        else now.strftime("%a · %d %b %Y · %H:%M")
+    )
     st.markdown(
         f"""
-        <header class="cp-topbar">
+        <header class="cp-topbar"{language_attributes}>
             <div class="cp-brand">
                 <div class="cp-mark">CP</div>
-                <div><strong>ClassPresence</strong><span>{escape(context)}</span></div>
+                <div><strong>ClassPresence</strong><span><bdi>{escape(context)}</bdi></span></div>
             </div>
-            <div class="cp-top-meta">{escape(now.strftime('%a · %d %b %Y · %H:%M'))}<br>{escape(settings.app_timezone)}</div>
+            <div class="cp-top-meta"><bdi>{escape(timestamp)}</bdi><br><bdi>{escape(settings.app_timezone)}</bdi></div>
         </header>
         """,
         unsafe_allow_html=True,
     )
 
 
-def _render_page_head(kicker: str, title: str, description: str, settings=None) -> None:
+def _render_page_head(
+    kicker: str,
+    title: str,
+    description: str,
+    settings=None,
+    *,
+    arabic: bool = False,
+) -> None:
     date_block = ""
     if settings is not None:
         now = now_in_app_timezone(settings)
-        date_block = (
-            f'<div class="cp-date-block">{escape(now.strftime("%A"))}<br>'
-            f'{escape(now.strftime("%d %B %Y"))}</div>'
+        weekday = _arabic_weekday(now.weekday()) if arabic else now.strftime("%A")
+        date_label = (
+            f"{now.day:02d} {ARABIC_MONTHS[now.month - 1]} {now.year}"
+            if arabic
+            else now.strftime("%d %B %Y")
         )
-    description_html = f"<p>{escape(description)}</p>" if description else ""
+        date_block = f'<div class="cp-date-block"><bdi>{escape(weekday)}</bdi><br><bdi>{escape(date_label)}</bdi></div>'
+    description_html = f'<p dir="auto">{escape(description)}</p>' if description else ""
+    language_attributes = ' lang="ar" dir="rtl"' if arabic else ""
     st.markdown(
         f"""
-        <section class="cp-page-head">
+        <section class="cp-page-head"{language_attributes}>
             <div><span class="cp-eyebrow">{escape(kicker)}</span><h1>{escape(title)}</h1>{description_html}</div>
             {date_block}
         </section>
@@ -1981,8 +2177,8 @@ def _render_metrics(items, *, compact: bool = False) -> None:
     size_class = " compact" if compact else ""
     cells = "".join(
         f'<div class="cp-metric"><span>{escape(str(label))}</span>'
-        f'<strong>{escape(str(value))}</strong>'
-        f'<small>{escape(str(detail))}</small></div>'
+        f'<strong><bdi>{escape(str(value))}</bdi></strong>'
+        f'<small><bdi>{escape(str(detail))}</bdi></small></div>'
         for label, value, detail in items
     )
     st.markdown(
@@ -2000,6 +2196,37 @@ def _render_section_title(title: str, meta: str) -> None:
 
 def _empty_state(message: str) -> None:
     st.markdown(f'<div class="cp-empty-state">{escape(message)}</div>', unsafe_allow_html=True)
+
+
+def _arabic_weekday(weekday: int) -> str:
+    return ARABIC_WEEKDAYS[weekday]
+
+
+def _arabic_short_date(value: date) -> str:
+    return f"{value.day:02d} {ARABIC_MONTHS[value.month - 1]}"
+
+
+def _student_message(message: object) -> str:
+    text = str(message).strip()
+    if any("\u0600" <= character <= "\u06ff" for character in text):
+        return text
+    translated = STUDENT_MESSAGE_TRANSLATIONS.get(text)
+    if translated:
+        return translated
+    if text.startswith("A one-time code has been sent to "):
+        recipient = text.removeprefix("A one-time code has been sent to ").rstrip(".")
+        return f"تم إرسال رمز التحقق إلى {recipient}."
+    if text.startswith("Attendance stamped successfully"):
+        return "تم تسجيل حضورك بنجاح."
+    if text.startswith("You are not in class"):
+        return "أنت خارج نطاق القاعة المسموح به."
+    if text.startswith("Location accuracy must be within"):
+        return "دقة الموقع غير كافية. اقترب من نافذة ثم أعد المحاولة."
+    if text.startswith("No class is active for your student ID"):
+        return "لا توجد محاضرة متاحة لهذا الرقم الجامعي الآن."
+    if text.startswith(("Unsupported OTP delivery mode", "Email OTP is enabled")):
+        return "خدمة رمز التحقق غير مهيأة. تواصل مع المسؤول."
+    return "تعذر إكمال الطلب. حاول مرة أخرى."
 
 
 def _render_course_strip(repo: AttendanceRepository, course) -> None:
@@ -2308,14 +2535,14 @@ def _has_course_location() -> bool:
 def _render_access_card(context: dict) -> None:
     st.markdown(
         f"""
-        <div class="cp-access-card">
-            <span class="cp-eyebrow">Access verified</span>
-            <h3>{escape(str(context['course_code']))} · {escape(str(context['schedule_label']))}</h3>
-            <p>{escape(str(context['student_name']))}</p>
+        <div class="cp-access-card" lang="ar" dir="rtl">
+            <span class="cp-eyebrow">تم التحقق من الوصول</span>
+            <h3><bdi>{escape(str(context['course_code']))} · {escape(str(context['schedule_label']))}</bdi></h3>
+            <p><bdi>{escape(str(context['student_name']))}</bdi></p>
             <div class="cp-access-grid">
-                <div><span>Window</span><strong>{escape(str(context['schedule_start_time']))}–{escape(str(context['schedule_end_time']))}</strong></div>
-                <div><span>Distance</span><strong>{float(context['distance_m']):.1f} m</strong></div>
-                <div><span>Radius</span><strong>{float(context['radius_m']):.0f} m</strong></div>
+                <div><span>النافذة</span><strong class="cp-ltr">{escape(str(context['schedule_start_time']))}–{escape(str(context['schedule_end_time']))}</strong></div>
+                <div><span>المسافة</span><strong><bdi>{float(context['distance_m']):.1f} متر</bdi></strong></div>
+                <div><span>النطاق</span><strong><bdi>{float(context['radius_m']):.0f} متر</bdi></strong></div>
             </div>
         </div>
         """,
@@ -2331,7 +2558,7 @@ def _handle_student_access_location(payload, repo, settings, university_id: str)
         return
     st.session_state["student_access_processed"] = captured_at
     if not university_id.strip():
-        st.error("Enter your student ID first.")
+        st.error("أدخل الرقم الجامعي أولاً.")
         return
     try:
         context = resolve_student_access_context(
@@ -2349,7 +2576,7 @@ def _handle_student_access_location(payload, repo, settings, university_id: str)
         st.session_state["student_passkey_error"] = None
         st.rerun(scope="fragment")
     except Exception as error:
-        st.error(str(error))
+        st.error(_student_message(error))
 
 
 def _request_student_otp(repo, settings, context: dict) -> None:
@@ -2365,7 +2592,7 @@ def _request_student_otp(repo, settings, context: dict) -> None:
         st.session_state["student_otp_preview_code"] = result.preview_code
         st.rerun(scope="fragment")
     except Exception as error:
-        st.error(str(error))
+        st.error(_student_message(error))
 
 
 def _verify_student_otp(repo, settings, context: dict, code: str) -> None:
@@ -2393,21 +2620,21 @@ def _verify_student_otp(repo, settings, context: dict, code: str) -> None:
         st.session_state["student_passkey_operation"] = None
         st.rerun(scope="fragment")
     except Exception as error:
-        st.error(str(error))
+        st.error(_student_message(error))
 
 
 def _render_student_passkey_step(repo, settings, context: dict, *, action: str) -> None:
     error = st.session_state.pop("student_passkey_error", None)
     if error:
-        st.error(error)
-    title = "Verify registered device" if action == "authenticate" else "Register this device"
-    status = "Passkey required" if action == "authenticate" else "One-time setup"
+        st.error(_student_message(error))
+    title = "التحقق من الجهاز المسجل" if action == "authenticate" else "تسجيل هذا الجهاز"
+    status = "مفتاح المرور مطلوب" if action == "authenticate" else "إعداد لمرة واحدة"
     _render_section_title(title, status)
 
     try:
         operation = _ensure_passkey_operation(repo, settings, context, action=action)
     except Exception as error:
-        st.error(str(error))
+        st.error(_student_message(error))
         return
 
     payload = passkey_action(
@@ -2415,6 +2642,7 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
         options_json=operation["options_json"],
         operation_id=operation["id"],
         key=f"student_passkey_{operation['id']}",
+        locale="ar",
     )
     if not payload or payload.get("operation_id") != operation["id"]:
         return
@@ -2554,7 +2782,7 @@ def _handle_stamp_location(payload) -> None:
     st.session_state["student_stamp_processed"] = captured_at
     if payload.get("error"):
         st.session_state["student_stamp_geolocation"] = None
-        st.error(str(payload["error"]))
+        st.error(_student_message(payload["error"]))
         return
     st.session_state["student_stamp_geolocation"] = payload
     st.session_state["student_stamp_result"] = None
@@ -2594,7 +2822,7 @@ def _expire_student_session() -> None:
     st.session_state["student_stamp_geolocation"] = None
     st.session_state["student_stamp_result"] = None
     st.session_state["student_access_notice"] = (
-        "Lecture verification expired. Verify passkey and OTP for the current window."
+        "انتهت صلاحية التحقق. أعد التحقق من الجهاز ورمز الدخول للمحاضرة الحالية."
     )
     _reset_student_access(clear_id=False)
 
