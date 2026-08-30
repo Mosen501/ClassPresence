@@ -9,7 +9,7 @@ description = "Geofenced attendance tracking for academic courses"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "streamlit>=1.36,<2.0",
+  "streamlit>=1.61,<2.0",
   "openpyxl>=3.1,<4.0",
   "psycopg[binary]>=3.2,<4.0",
 ]
