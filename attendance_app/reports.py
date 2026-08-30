@@ -12,11 +12,10 @@ from openpyxl.chart.label import DataLabelList
 from openpyxl.formatting.rule import ColorScaleRule, FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from attendance_app.utils import generate_expected_occurrences, weekday_label
 
-REPORT_VERSION = "2.0"
+REPORT_VERSION = "2.1"
 REPORT_SHEETS = [
     "Executive Summary",
     "Course Details",
@@ -426,7 +425,6 @@ def _build_roster_sheet(sheet, students: list) -> int:
         subtitle="Enrolled students and current report-safe device status",
         headers=headers,
         rows=rows,
-        table_name="RosterTable",
         widths=[18, 28, 32, 18, 18, 20, 20, 20, 18, 18],
     )
     _format_datetime_columns(sheet, last_row, [7, 8])
@@ -456,7 +454,6 @@ def _build_timetable_sheet(sheet, schedules: list) -> int:
             ]
             for schedule in schedules
         ],
-        table_name="TimetableTable",
         widths=[18, 30, 16, 16],
     )
 
@@ -507,7 +504,6 @@ def _build_attendance_sheet(sheet, attendance_records: list) -> int:
         subtitle="Complete location and device-verification evidence for every check-in",
         headers=headers,
         rows=rows,
-        table_name="AttendanceRecordsTable",
         widths=[12, 28, 18, 14, 24, 16, 16, 22, 15, 15, 16, 18, 22, 20],
     )
     _format_date_columns(sheet, last_row, [4])
@@ -554,7 +550,6 @@ def _build_performance_sheet(sheet, eligibility_rows: list[dict[str, object]]) -
         subtitle="Formula-driven attendance standing and exam eligibility",
         headers=headers,
         rows=rows,
-        table_name="StudentPerformanceTable",
         widths=[28, 18, 14, 14, 20, 18, 18, 14, 18],
     )
     _format_integer_columns(sheet, last_row, [3, 4, 5, 6, 8])
@@ -624,7 +619,6 @@ def _build_lecture_sheet(sheet, lecture_rows: list[dict[str, object]]) -> int:
         subtitle="Attendance totals and rates for every elapsed lecture",
         headers=headers,
         rows=rows,
-        table_name="LectureAnalyticsTable",
         widths=[14, 38, 16, 28, 14, 14, 16, 14, 20, 16],
     )
     _format_date_columns(sheet, last_row, [1])
@@ -693,7 +687,6 @@ def _build_security_alerts_sheet(sheet, security_alerts: list) -> int:
         subtitle="Proxy indicators, severity, evidence, and manager resolution status",
         headers=headers,
         rows=rows,
-        table_name="SecurityAlertsTable",
         widths=[16, 22, 14, 26, 18, 24, 14, 30, 55, 20, 14, 22, 15, 15, 18],
     )
     _format_datetime_columns(sheet, last_row, [2, 12])
@@ -747,7 +740,6 @@ def _build_device_audit_sheet(sheet, events: list) -> int:
         subtitle="Permanent registration and manager reset history",
         headers=headers,
         rows=rows,
-        table_name="DeviceAuditTable",
         widths=[20, 22, 28, 18, 30, 16, 24, 16, 20, 20],
     )
     _format_datetime_columns(sheet, last_row, [2])
@@ -793,7 +785,6 @@ def _build_otp_activity_sheet(sheet, otp_activity: list, generated_at: datetime)
         subtitle="Lecture-bound issuance lifecycle without OTP values or hashes",
         headers=headers,
         rows=rows,
-        table_name="OtpActivityTable",
         widths=[18, 22, 14, 28, 18, 24, 14, 28, 22, 16, 22, 22],
     )
     _format_datetime_columns(sheet, last_row, [2, 9, 11, 12])
@@ -876,7 +867,6 @@ def _build_table_sheet(
     subtitle: str,
     headers: list[str],
     rows: list[list[object]],
-    table_name: str,
     widths: list[float],
 ) -> int:
     _prepare_sheet(
@@ -902,25 +892,18 @@ def _build_table_sheet(
             cell.font = BODY_FONT
             cell.alignment = BODY_WRAP_ALIGNMENT if column_index in {2, 3, 8, 9} else BODY_ALIGNMENT
             cell.border = ROW_BORDER
+            if row_index % 2 == 0:
+                cell.fill = SOFT_FILL
         sheet.row_dimensions[row_index].height = 20
 
     last_row = header_row + len(rows)
     formula_last_row = max(last_row, header_row + 1)
-    if rows:
-        table = Table(
-            displayName=table_name, ref=f"A{header_row}:{get_column_letter(len(headers))}{last_row}"
-        )
-        table.tableStyleInfo = TableStyleInfo(
-            name="TableStyleMedium2",
-            showFirstColumn=False,
-            showLastColumn=False,
-            showRowStripes=True,
-            showColumnStripes=False,
-        )
-        sheet.add_table(table)
-        sheet.auto_filter.ref = table.ref
-    else:
-        sheet.auto_filter.ref = f"A{header_row}:{get_column_letter(len(headers))}{header_row}"
+    filter_last_row = max(last_row, header_row)
+    # A worksheet filter avoids overlapping filter definitions that Excel repairs on open.
+    sheet.auto_filter.ref = (
+        f"A{header_row}:{get_column_letter(len(headers))}{filter_last_row}"
+    )
+    if not rows:
         sheet.merge_cells(
             start_row=3,
             start_column=1,

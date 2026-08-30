@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from io import BytesIO
+from zipfile import ZipFile
 from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
@@ -181,8 +182,10 @@ class ReportsTestCase(unittest.TestCase):
         self.assertEqual(workbook["Roster"]["D6"].value, "tel:+1555000001")
         self.assertEqual(workbook["OTP Activity"]["H6"].value, "p*************@example.edu")
         self.assertNotEqual(workbook["Security Alerts"]["J6"].value, "alert-raw-binding-secret")
-        self.assertEqual(len(workbook["Attendance Records"].tables), 1)
-        self.assertEqual(len(workbook["Security Alerts"].tables), 1)
+        self.assertEqual(len(workbook["Attendance Records"].tables), 0)
+        self.assertEqual(len(workbook["Security Alerts"].tables), 0)
+        self.assertEqual(workbook["Attendance Records"].auto_filter.ref, "A5:N6")
+        self.assertEqual(workbook["Security Alerts"].auto_filter.ref, "A5:O6")
 
         workbook_text = "\n".join(
             str(cell.value)
@@ -197,6 +200,40 @@ class ReportsTestCase(unittest.TestCase):
         self.assertNotIn("code_hash", workbook_text.lower())
         self.assertNotIn("public_key", workbook_text.lower())
         self.assertNotIn("credential_id", workbook_text.lower())
+
+    def test_report_package_uses_filters_without_excel_table_parts(self) -> None:
+        report = self._build_report()
+
+        with ZipFile(BytesIO(report)) as archive:
+            names = archive.namelist()
+            self.assertFalse(any(name.startswith("xl/tables/") for name in names))
+            self.assertNotIn(b"/table", archive.read("[Content_Types].xml"))
+            for name in (item for item in names if item.startswith("xl/worksheets/sheet")):
+                self.assertNotIn(b"<tableParts", archive.read(name))
+
+        workbook = load_workbook(BytesIO(report), data_only=False)
+        for sheet_name in REPORT_SHEETS[2:]:
+            sheet = workbook[sheet_name]
+            self.assertEqual(len(sheet.tables), 0)
+            self.assertTrue(str(sheet.auto_filter.ref).startswith("A5:"))
+
+    def test_report_formulas_have_no_broken_or_unsupported_references(self) -> None:
+        workbook = load_workbook(BytesIO(self._build_report()), data_only=False)
+        formulas = [
+            str(cell.value)
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if cell.data_type == "f"
+        ]
+
+        self.assertGreater(len(formulas), 0)
+        for formula in formulas:
+            self.assertTrue(formula.startswith("="))
+            self.assertNotIn("#REF!", formula.upper())
+            self.assertNotIn("#NAME?", formula.upper())
+            self.assertNotIn("_XLFN.", formula.upper())
+            self.assertNotIn("[", formula)
 
     def test_new_report_restores_operational_data_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
