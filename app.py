@@ -748,10 +748,148 @@ APP_CSS = """
         padding: 0.12rem 0.34rem;
     }
 
+    .aa-route-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        margin-bottom: 1.35rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid rgba(216, 225, 239, 0.95);
+    }
+
+    .aa-route-copy {
+        max-width: 44rem;
+    }
+
+    .aa-route-label {
+        display: block;
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--aa-text-muted);
+    }
+
+    .aa-route-title {
+        margin: 0.22rem 0 0 0;
+        font-size: 2rem;
+        line-height: 1.05;
+        letter-spacing: -0.05em;
+        color: var(--aa-text);
+    }
+
+    .aa-route-description {
+        margin: 0.6rem 0 0 0;
+        font-size: 0.94rem;
+        line-height: 1.65;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-route-tags {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.55rem;
+        max-width: 26rem;
+    }
+
+    .aa-route-tag {
+        padding: 0.42rem 0.74rem;
+        border-radius: 999px;
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--aa-text-soft);
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .aa-sidebar-label {
+        display: block;
+        margin: 1.05rem 0 0.45rem 0;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: #c9d4e8;
+    }
+
+    .aa-step-rail {
+        display: grid;
+        gap: 0.95rem;
+        padding: 1.1rem 1.15rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(216, 225, 239, 0.95);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+    }
+
+    .aa-step-item {
+        display: grid;
+        grid-template-columns: 2.3rem 1fr;
+        gap: 0.8rem;
+        align-items: flex-start;
+    }
+
+    .aa-step-index {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.1rem;
+        height: 2.1rem;
+        border-radius: 50%;
+        background: rgba(29, 78, 216, 0.10);
+        color: var(--aa-accent);
+        font-size: 0.82rem;
+        font-weight: 800;
+    }
+
+    .aa-step-content h4 {
+        margin: 0;
+        font-size: 0.96rem;
+        color: var(--aa-text);
+    }
+
+    .aa-step-content p {
+        margin: 0.28rem 0 0 0;
+        font-size: 0.84rem;
+        line-height: 1.55;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-compact-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 0.7rem;
+    }
+
+    .aa-compact-list li {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.8rem;
+        padding-bottom: 0.7rem;
+        border-bottom: 1px solid rgba(216, 225, 239, 0.88);
+        font-size: 0.85rem;
+        line-height: 1.45;
+        color: var(--aa-text-soft);
+    }
+
+    .aa-compact-list li:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .aa-compact-list strong {
+        color: var(--aa-text);
+    }
+
     @media (max-width: 980px) {
         .aa-shell,
         .aa-course-banner,
-        .aa-status-banner {
+        .aa-status-banner,
+        .aa-route-header {
             flex-direction: column;
         }
 
@@ -761,6 +899,10 @@ APP_CSS = """
         }
 
         .aa-banner-tags {
+            justify-content: flex-start;
+        }
+
+        .aa-route-tags {
             justify-content: flex-start;
         }
 
@@ -802,6 +944,18 @@ DEFAULT_TIMETABLE_ROWS = [
     {"label": "L6", "start_time": "12:30", "end_time": "13:20"},
     {"label": "L7", "start_time": "13:25", "end_time": "14:15"},
 ]
+
+MANAGER_SECTIONS = [
+    "Today",
+    "Courses",
+    "Students",
+    "Attendance Log",
+    "Imports",
+    "Reports",
+    "Settings",
+]
+
+STUDENT_SECTIONS = ["Check In", "Status", "History"]
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -994,6 +1148,151 @@ def _render_sidebar(page: str, settings, repo: AttendanceRepository) -> None:
     )
 
 
+def _render_sidebar_brand() -> None:
+    st.markdown(
+        """
+        <div class="aa-sidebar-brand">
+            <strong>AttendancApp</strong>
+            <span>Attendance operations split into a back office for staff and a focused check-in experience for students.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _normalize_choice_state(key: str, options: list[str], default: str) -> None:
+    if st.session_state.get(key) not in options:
+        st.session_state[key] = default
+
+
+def _render_sidebar_runtime(settings, repo: AttendanceRepository, context_copy: str) -> None:
+    storage_label = "Persistent hosted database" if repo.backend == "postgres" else "Local SQLite file"
+    st.markdown(
+        f"""
+        <div class="aa-sidebar-card">
+            <strong>Context</strong>
+            <span>{escape(context_copy)}</span>
+            <em>Timezone: {escape(settings.app_timezone)} · OTP mode: {escape(_otp_mode_label(settings))}</em>
+        </div>
+        <div class="aa-sidebar-card">
+            <strong>Runtime</strong>
+            <span>Environment: {escape(settings.app_env.capitalize())}</span>
+            <span>Storage: {escape(storage_label)}</span>
+            <span>Date: {escape(now_in_app_timezone(settings).strftime("%b %d, %Y"))}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_manager_sidebar_navigation(settings, repo: AttendanceRepository) -> str | None:
+    courses = _cached_list_courses(settings.database_target)
+    course_options = ["New course", *[str(course["code"]) for course in courses]]
+    _prepare_manager_course_selector(course_options)
+    _normalize_choice_state("manager_section", MANAGER_SECTIONS, MANAGER_SECTIONS[0])
+
+    st.markdown('<span class="aa-sidebar-label">Operations</span>', unsafe_allow_html=True)
+    if st.session_state.get("manager_auth") is None:
+        st.markdown(
+            """
+            <div class="aa-sidebar-card">
+                <strong>Sign in required</strong>
+                <span>The operations workspace unlocks after instructor authentication.</span>
+                <em>Course records, imports, and reporting stay behind the protected back office.</em>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        _render_sidebar_runtime(
+            settings,
+            repo,
+            "Back-office pages become available after sign in.",
+        )
+        return None
+
+    section = st.radio(
+        "Operations navigation",
+        options=MANAGER_SECTIONS,
+        key="manager_section",
+        label_visibility="collapsed",
+    )
+    st.markdown('<span class="aa-sidebar-label">Selected course</span>', unsafe_allow_html=True)
+    st.selectbox(
+        "Selected course",
+        options=course_options,
+        key="manager_course_selector",
+        label_visibility="collapsed",
+    )
+    selected_code = st.session_state.get("manager_course_selector", "New course")
+    selected_copy = (
+        "You are preparing a new course draft."
+        if selected_code == "New course"
+        else f"Working course: {selected_code}"
+    )
+    _render_sidebar_runtime(settings, repo, selected_copy)
+    return section
+
+
+def _render_student_sidebar_navigation(settings, repo: AttendanceRepository) -> str:
+    auth = st.session_state.get("student_auth")
+    options = STUDENT_SECTIONS if auth is not None else ["Start"]
+    _normalize_choice_state("student_section", options, options[0])
+    st.markdown('<span class="aa-sidebar-label">Student app</span>', unsafe_allow_html=True)
+    section = st.radio(
+        "Student navigation",
+        options=options,
+        key="student_section",
+        label_visibility="collapsed",
+    )
+    if auth is not None:
+        course = _cached_get_course(settings.database_target, int(auth["course_id"]))
+        student = repo.get_student(int(auth["student_id"]))
+        context_copy = (
+            f"{course['code']} · {student['full_name']}"
+            if course is not None and student is not None
+            else "Active student session"
+        )
+    else:
+        context_copy = "Use the guided flow to verify location, request a code, and sign in."
+    _render_sidebar_runtime(settings, repo, context_copy)
+    return section
+
+
+def _selected_manager_course(settings) -> dict | None:
+    selected_code = st.session_state.get("manager_course_selector", "New course")
+    if selected_code == "New course":
+        return None
+    return _cached_get_course_by_code(settings.database_target, selected_code)
+
+
+def _render_route_header(label: str, title: str, description: str, *, tags: list[str] | None = None) -> None:
+    tag_markup = ""
+    if tags:
+        tag_markup = '<div class="aa-route-tags">' + "".join(
+            f'<span class="aa-route-tag">{escape(tag)}</span>' for tag in tags
+        ) + "</div>"
+
+    st.markdown(
+        f"""
+        <section class="aa-route-header">
+            <div class="aa-route-copy">
+                <span class="aa-route-label">{escape(label)}</span>
+                <h1 class="aa-route-title">{escape(title)}</h1>
+                <p class="aa-route-description">{escape(description)}</p>
+            </div>
+            {tag_markup}
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _course_covers_date(course, target_date: date) -> bool:
+    start = parse_iso_date(course["start_date"])
+    end = parse_iso_date(course["end_date"] or course["start_date"])
+    return start <= target_date <= end
+
+
 def main() -> None:
     st.set_page_config(page_title="AttendancApp", page_icon="A", layout="wide")
     st.markdown(APP_CSS, unsafe_allow_html=True)
@@ -1014,66 +1313,290 @@ def main() -> None:
     _init_session_state()
 
     with st.sidebar:
+        _render_sidebar_brand()
+        st.markdown('<span class="aa-sidebar-label">Workspace</span>', unsafe_allow_html=True)
         portal = st.radio(
-            "Portal",
+            "Workspace",
             options=["Operations", "Student"],
             label_visibility="collapsed",
         )
         page = "Manager" if portal == "Operations" else "Student"
-        _render_sidebar(page, settings, repo)
-
-    _render_shell_header(page, settings, repo)
+        manager_section = None
+        student_section = "Start"
+        if page == "Manager":
+            manager_section = _render_manager_sidebar_navigation(settings, repo)
+        else:
+            student_section = _render_student_sidebar_navigation(settings, repo)
 
     if page == "Manager":
         if _render_manager_auth(settings):
-            render_manager_page(repo, settings)
+            render_manager_page(
+                repo,
+                settings,
+                manager_section or st.session_state.get("manager_section", MANAGER_SECTIONS[0]),
+            )
     else:
-        render_student_page(repo, settings)
+        render_student_page(repo, settings, student_section)
 
 
-def render_manager_page(repo: AttendanceRepository, settings) -> None:
+def render_manager_page(repo: AttendanceRepository, settings, section: str) -> None:
     notice = st.session_state.pop("manager_notice", None)
     if notice:
         st.success(notice)
 
-    _render_page_intro(
-        "Operations console",
-        "Run courses without the clutter",
-        "Use separate workspaces for setup, timetable control, roster imports, and reporting so each job has its own place.",
-    )
-
-    top_left, top_right = st.columns([2.3, 1.0], gap="large")
     courses = _cached_list_courses(settings.database_target)
-    course_options = ["New course", *[str(course["code"]) for course in courses]]
-    _prepare_manager_course_selector(course_options)
-    with top_left:
-        st.markdown(
-            '<p class="aa-subsection">Course workspace</p>',
-            unsafe_allow_html=True,
-        )
-        selected_code = st.selectbox(
-            "Working course",
-            options=course_options,
-            key="manager_course_selector",
-        )
-    with top_right:
-        st.markdown(
-            f'<div class="aa-user-pill">Signed in as {escape(settings.manager_username)}</div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("Sign out", use_container_width=True):
-            st.session_state["manager_auth"] = None
-            st.rerun()
-
-    selected_course = (
-        _cached_get_course_by_code(settings.database_target, selected_code)
-        if selected_code != "New course"
-        else None
-    )
-
+    selected_course = _selected_manager_course(settings)
     _ensure_course_location_defaults()
     _sync_course_location_state(selected_course)
 
+    titles = {
+        "Today": "Today",
+        "Courses": "Courses",
+        "Students": "Students",
+        "Attendance Log": "Attendance log",
+        "Imports": "Imports",
+        "Reports": "Reports",
+        "Settings": "Settings",
+    }
+    descriptions = {
+        "Today": "Monitor live teaching windows, next sessions opening today, and recent classroom activity across the system.",
+        "Courses": "Manage course records as a working directory, then open one course at a time for setup and schedule maintenance.",
+        "Students": "Review enrolled students across courses in a single directory instead of jumping course by course.",
+        "Attendance Log": "Inspect recent attendance events as raw operational data with course-level filtering.",
+        "Imports": "Handle roster uploads and workbook restores in one operational intake area.",
+        "Reports": "Export the selected course and review diagnostics after the live data is in place.",
+        "Settings": "Review runtime configuration, delivery mode, and basic operational health from one place.",
+    }
+    route_tags = [settings.app_timezone, now_in_app_timezone(settings).strftime("%b %d, %Y")]
+    if selected_course is not None and section in {"Courses", "Imports", "Reports"}:
+        route_tags.append(f"Course {selected_course['code']}")
+
+    header_left, header_right = st.columns([3.0, 1.0], gap="large")
+    with header_left:
+        _render_route_header(
+            "Operations back office",
+            titles[section],
+            descriptions[section],
+            tags=route_tags,
+        )
+    with header_right:
+        st.markdown(
+            f'<div class="aa-user-pill">Instructor {escape(settings.manager_username)}</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Sign out", key="manager_signout", use_container_width=True):
+            st.session_state["manager_auth"] = None
+            st.rerun()
+
+    if section == "Today":
+        _render_manager_today_view(repo, settings, courses)
+        return
+    if section == "Courses":
+        _render_manager_courses_view(repo, settings, courses, selected_course)
+        return
+    if section == "Students":
+        _render_manager_students_view(settings, courses, selected_course)
+        return
+    if section == "Attendance Log":
+        _render_manager_attendance_log_view(settings, courses, selected_course)
+        return
+    if section == "Imports":
+        _render_manager_imports_view(repo, settings, selected_course)
+        return
+    if section == "Reports":
+        _render_manager_reports_view(repo, settings, selected_course)
+        return
+    _render_manager_settings_view(repo, settings, courses)
+
+
+def _build_today_session_rows(settings, courses: list[dict]) -> list[dict]:
+    now = now_in_app_timezone(settings)
+    rows: list[dict] = []
+    for course in courses:
+        if not _course_covers_date(course, now.date()):
+            continue
+        schedules = _cached_list_schedules_for_course(settings.database_target, int(course["id"]))
+        roster_size = len(_cached_list_students_for_course(settings.database_target, int(course["id"])))
+        for schedule in schedules:
+            if int(schedule["weekday"]) != now.weekday():
+                continue
+            start_time = parse_hhmm(str(schedule["start_time"]))
+            end_time = parse_hhmm(str(schedule["end_time"]))
+            if now.time() > end_time:
+                continue
+            status = "Live" if start_time <= now.time() <= end_time else "Upcoming"
+            rows.append(
+                {
+                    "Status": status,
+                    "Course": str(course["code"]),
+                    "Title": str(course["title"]),
+                    "Window": str(schedule["label"]),
+                    "Start": str(schedule["start_time"]),
+                    "End": str(schedule["end_time"]),
+                    "Roster": roster_size,
+                    "_sort_status": 0 if status == "Live" else 1,
+                    "_sort_time": str(schedule["start_time"]),
+                }
+            )
+    rows.sort(key=lambda row: (row["_sort_status"], row["_sort_time"], row["Course"]))
+    return rows
+
+
+def _build_course_directory_rows(settings, courses: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for course in courses:
+        course_id = int(course["id"])
+        rows.append(
+            {
+                "Course": str(course["code"]),
+                "Title": str(course["title"]),
+                "Dates": f"{course['start_date']} to {course['end_date']}",
+                "Roster": len(_cached_list_students_for_course(settings.database_target, course_id)),
+                "Windows": len(_cached_list_schedules_for_course(settings.database_target, course_id)),
+                "Radius (m)": round(float(course["radius_m"]), 1),
+            }
+        )
+    return rows
+
+
+def _build_student_directory_rows(settings, courses: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for course in courses:
+        course_id = int(course["id"])
+        attendance_counts = _cached_count_attendance_by_student_for_course(
+            settings.database_target,
+            course_id,
+        )
+        for student in _cached_list_students_for_course(settings.database_target, course_id):
+            rows.append(
+                {
+                    "Course": str(course["code"]),
+                    "Student": str(student["full_name"]),
+                    "Student ID": str(student["university_id"]),
+                    "Email": str(student["email"]),
+                    "Attendance": attendance_counts.get(int(student["id"]), 0),
+                }
+            )
+    rows.sort(key=lambda row: (row["Student"], row["Course"]))
+    return rows
+
+
+def _build_attendance_log_rows(settings, courses: list[dict], *, per_course_limit: int = 250) -> list[dict]:
+    rows: list[dict] = []
+    for course in courses:
+        course_id = int(course["id"])
+        for record in _cached_list_course_attendance(settings.database_target, course_id, per_course_limit):
+            rows.append(
+                {
+                    "Course": str(course["code"]),
+                    "Student": str(record["full_name"]),
+                    "Student ID": str(record["university_id"]),
+                    "Date": str(record["attendance_date"]),
+                    "Window": str(record["schedule_label"]),
+                    "Stamped At": str(record["stamped_at"]),
+                    "Distance (m)": round(float(record["distance_m"]), 2),
+                }
+            )
+    rows.sort(key=lambda row: row["Stamped At"], reverse=True)
+    return rows
+
+
+def _build_eligibility_rows(repo: AttendanceRepository, settings, course) -> list[dict]:
+    students = _cached_list_students_for_course(settings.database_target, int(course["id"]))
+    schedules = _cached_list_schedules_for_course(settings.database_target, int(course["id"]))
+    attendance_counts = _cached_count_attendance_by_student_for_course(
+        settings.database_target,
+        int(course["id"]),
+    )
+
+    rows: list[dict] = []
+    for student in students:
+        student_id = int(student["id"])
+        summary = build_student_attendance_summary(
+            repo,
+            settings,
+            course=course,
+            student=student,
+            schedules=schedules,
+            attended_count=attendance_counts.get(student_id, 0),
+        )
+        rows.append(
+            {
+                "Student": student["full_name"],
+                "Student ID": student["university_id"],
+                "Attended": summary.attended_count,
+                "Absences": summary.absences,
+                "Elapsed": summary.elapsed_meetings,
+                "Total": summary.total_meetings,
+                "Status": "At Risk" if summary.denied_exam_entry else "Eligible",
+            }
+        )
+    return rows
+
+
+def _render_manager_today_view(repo: AttendanceRepository, settings, courses: list[dict]) -> None:
+    session_rows = _build_today_session_rows(settings, courses)
+    attendance_rows = _build_attendance_log_rows(settings, courses, per_course_limit=120)
+    today_key = now_in_app_timezone(settings).date().isoformat()
+    today_attendance = [row for row in attendance_rows if row["Date"] == today_key]
+    live_rows = [row for row in session_rows if row["Status"] == "Live"]
+    upcoming_rows = [row for row in session_rows if row["Status"] == "Upcoming"]
+    active_courses = {row["Course"] for row in session_rows}
+
+    metrics = st.columns(4)
+    metrics[0].metric("Live windows", len(live_rows))
+    metrics[1].metric("Upcoming today", len(upcoming_rows))
+    metrics[2].metric("Courses running today", len(active_courses))
+    metrics[3].metric("Attendance today", len(today_attendance))
+
+    left, right = st.columns([1.2, 0.95], gap="large")
+    with left:
+        with st.container(border=True):
+            st.subheader("Live right now")
+            if live_rows:
+                st.dataframe(
+                    [{key: value for key, value in row.items() if not key.startswith("_")} for row in live_rows],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption("No course window is live right now.")
+
+        with st.container(border=True):
+            st.subheader("Opening later today")
+            if upcoming_rows:
+                st.dataframe(
+                    [{key: value for key, value in row.items() if not key.startswith("_")} for row in upcoming_rows],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption("There are no more scheduled windows opening later today.")
+
+    with right:
+        with st.container(border=True):
+            st.subheader("Recent classroom activity")
+            if today_attendance:
+                st.dataframe(
+                    today_attendance[:12],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption("No attendance stamps have been recorded yet today.")
+        _render_note_card(
+            "Operating model",
+            "Treat this page as the daily desk: live windows first, recent attendance second, and deep configuration only when you need it.",
+            tone="info",
+        )
+
+
+def _render_manager_courses_view(
+    repo: AttendanceRepository,
+    settings,
+    courses: list[dict],
+    selected_course,
+) -> None:
     selected_start_date = (
         parse_iso_date(selected_course["start_date"])
         if selected_course is not None
@@ -1089,38 +1612,422 @@ def render_manager_page(repo: AttendanceRepository, settings) -> None:
         float(selected_course["absence_limit_pct"]) if selected_course is not None else 20.0
     )
 
-    active_course = selected_course
+    left, right = st.columns([0.95, 1.45], gap="large")
+    with left:
+        with st.container(border=True):
+            st.subheader("Course directory")
+            directory_rows = _build_course_directory_rows(settings, courses)
+            if directory_rows:
+                st.dataframe(directory_rows, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No course records exist yet.")
+            if st.button("Create new course", key="manager_new_course", use_container_width=True):
+                st.session_state["manager_course_selector"] = "New course"
+                st.session_state["loaded_course_location_signature"] = None
+                st.rerun()
 
-    if active_course is not None:
-        _render_course_summary(repo, settings, active_course)
-    else:
-        _render_empty_state(
-            "No course selected yet",
-            "Create a new course or restore one from an exported workbook to unlock timetable, roster, and reporting workspaces.",
+        if selected_course is not None:
+            with st.container(border=True):
+                st.subheader("Working record")
+                st.write(f"**{selected_course['code']}**")
+                st.caption(selected_course["title"])
+                st.caption(
+                    f"Dates: {selected_course['start_date']} to {selected_course['end_date']} · "
+                    f"Radius {float(selected_course['radius_m']):.1f} m"
+                )
+        else:
+            _render_note_card(
+                "New course draft",
+                "You are in create mode. Save the course details first, then continue with timetable maintenance and roster imports from the other sections.",
+                tone="success",
+            )
+
+    with right:
+        form_key = f"course_form_{selected_course['id'] if selected_course is not None else 'new'}"
+        form_left, form_right = st.columns([1.05, 0.95], gap="large")
+        with form_left:
+            with st.container(border=True):
+                st.subheader("Course record")
+                with st.form(form_key, clear_on_submit=False):
+                    code = st.text_input(
+                        "Course code",
+                        value=str(selected_course["code"]) if selected_course is not None else "",
+                        placeholder="MAT1116",
+                    )
+                    title = st.text_input(
+                        "Course name",
+                        value=str(selected_course["title"]) if selected_course is not None else "",
+                        placeholder="Foundations of Mathematics",
+                    )
+                    start_date = st.date_input("Course start date", value=selected_start_date)
+                    end_date = st.date_input("Course end date", value=selected_end_date)
+                    radius_m = st.number_input(
+                        "Allowed attendance radius (meters)",
+                        min_value=1.0,
+                        value=selected_radius,
+                        step=0.5,
+                    )
+                    absence_limit_pct = st.number_input(
+                        "Absence limit (%)",
+                        min_value=1.0,
+                        max_value=100.0,
+                        value=selected_absence_limit,
+                        step=1.0,
+                    )
+                    submit_course = st.form_submit_button("Save course", use_container_width=True)
+
+                if submit_course:
+                    _save_course(
+                        repo=repo,
+                        settings=settings,
+                        code=code,
+                        title=title,
+                        start_date=start_date,
+                        end_date=end_date,
+                        radius_m=float(radius_m),
+                        absence_limit_pct=float(absence_limit_pct),
+                        existing_course_id=int(selected_course["id"]) if selected_course is not None else None,
+                    )
+
+                if settings.app_env == "development" and st.button(
+                    "Seed demo course MAT1116",
+                    key="seed_demo_course",
+                    use_container_width=True,
+                ):
+                    try:
+                        created = seed_demo_data(
+                            repo,
+                            settings,
+                            latitude=float(st.session_state["course_latitude"]),
+                            longitude=float(st.session_state["course_longitude"]),
+                        )
+                        _clear_cached_database_reads()
+                        if created:
+                            st.success("MAT1116 demo data added successfully.")
+                        else:
+                            st.info("MAT1116 already exists in the database.")
+                    except Exception as error:  # pragma: no cover - Streamlit surface
+                        st.error(str(error))
+
+        with form_right:
+            with st.container(border=True):
+                st.subheader("Classroom location")
+                st.caption("Pin the room once. Every student check-in uses this saved boundary.")
+                manager_geo = location_picker(
+                    latitude=float(st.session_state["course_latitude"]),
+                    longitude=float(st.session_state["course_longitude"]),
+                    radius_m=float(selected_course["radius_m"]) if selected_course is not None else 3.0,
+                    has_selection=_has_course_location_selection(),
+                    key=f"manager_location_picker_{selected_course['id'] if selected_course is not None else 'new'}",
+                )
+                _handle_location_capture(manager_geo, prefix="manager")
+                _render_location_summary()
+
+        if selected_course is None:
+            _render_empty_state(
+                "Save the course to continue",
+                "Once the course exists, this page will show its timetable snapshot and roster preview, while the dedicated imports and reports sections unlock the rest of the workflow.",
+            )
+            return
+
+        lower_left, lower_right = st.columns([1.0, 1.0], gap="large")
+        schedules = _cached_list_schedules_for_course(settings.database_target, int(selected_course["id"]))
+        students = _cached_list_students_for_course(settings.database_target, int(selected_course["id"]))
+        with lower_left:
+            with st.container(border=True):
+                st.subheader("Weekly windows")
+                if schedules:
+                    st.dataframe(
+                        [
+                            {
+                                "Day": weekday_label(int(schedule["weekday"])),
+                                "Window": schedule["label"],
+                                "Start": schedule["start_time"],
+                                "End": schedule["end_time"],
+                            }
+                            for schedule in schedules
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.caption("No timetable windows are configured yet. Use the dedicated Timetable work in this section by continuing below.")
+                edited_timetable_rows = st.data_editor(
+                    _build_timetable_editor_rows(
+                        schedules,
+                        show_default_rows=_should_show_default_timetable_rows(
+                            int(selected_course["id"]),
+                            schedules,
+                        ),
+                    ),
+                    key=_timetable_editor_key(int(selected_course["id"])),
+                    hide_index=True,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_order=[
+                        "label",
+                        "start_time",
+                        "end_time",
+                        "Sunday",
+                        "Monday",
+                        "Tuesday",
+                        "Wednesday",
+                        "Thursday",
+                        "remove",
+                    ],
+                )
+                action_left, action_right = st.columns(2, gap="large")
+                with action_left:
+                    if st.button("Save timetable", key="save_timetable_courses_view", use_container_width=True):
+                        _save_timetable(
+                            repo=repo,
+                            settings=settings,
+                            course_id=int(selected_course["id"]),
+                            edited_rows=edited_timetable_rows,
+                        )
+                with action_right:
+                    if st.button(
+                        "Load L1-L7 defaults",
+                        key="load_default_timetable_courses_view",
+                        use_container_width=True,
+                    ):
+                        _show_default_timetable_rows(int(selected_course["id"]))
+                        _bump_timetable_editor_version(int(selected_course["id"]))
+                        st.session_state["manager_notice"] = "Standard L1-L7 templates are visible in the editor."
+                        st.rerun()
+
+        with lower_right:
+            with st.container(border=True):
+                st.subheader("Roster preview")
+                if students:
+                    st.dataframe(
+                        [
+                            {
+                                "Student": row["full_name"],
+                                "Student ID": row["university_id"],
+                                "Email": row["email"],
+                            }
+                            for row in students[:20]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    if len(students) > 20:
+                        st.caption(f"Showing the first 20 roster records out of {len(students)}.")
+                else:
+                    st.caption("No roster has been imported for this course yet.")
+                _render_note_card(
+                    "Next step",
+                    "Use Imports for full roster intake and Reports when you are ready to export the course workbook.",
+                    tone="info",
+                )
+
+
+def _render_manager_students_view(settings, courses: list[dict], selected_course) -> None:
+    rows = _build_student_directory_rows(settings, courses)
+    filter_options = ["All courses", *[str(course["code"]) for course in courses]]
+    preferred_course = selected_course["code"] if selected_course is not None else "All courses"
+    if st.session_state.get("students_course_filter") not in filter_options:
+        st.session_state["students_course_filter"] = preferred_course
+
+    controls_left, controls_right = st.columns([0.85, 0.5], gap="large")
+    with controls_left:
+        query = st.text_input("Search students", key="students_search_query", placeholder="Name, ID, or email")
+    with controls_right:
+        selected_filter = st.selectbox(
+            "Course filter",
+            options=filter_options,
+            key="students_course_filter",
         )
 
-    overview_tab, course_tab, timetable_tab, roster_tab, reports_tab = st.tabs(
-        ["Overview", "Course Setup", "Timetable", "Roster", "Reports"]
+    filtered = rows
+    if selected_filter != "All courses":
+        filtered = [row for row in filtered if row["Course"] == selected_filter]
+    if query.strip():
+        query_text = query.strip().lower()
+        filtered = [
+            row
+            for row in filtered
+            if query_text in row["Student"].lower()
+            or query_text in row["Student ID"].lower()
+            or query_text in row["Email"].lower()
+        ]
+
+    unique_students = {row["Student ID"] for row in filtered}
+    metrics = st.columns(3)
+    metrics[0].metric("Enrollments shown", len(filtered))
+    metrics[1].metric("Unique students", len(unique_students))
+    metrics[2].metric("Courses represented", len({row["Course"] for row in filtered}))
+
+    with st.container(border=True):
+        st.subheader("Student directory")
+        if filtered:
+            st.dataframe(filtered, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No students match the current filters.")
+
+
+def _render_manager_attendance_log_view(settings, courses: list[dict], selected_course) -> None:
+    rows = _build_attendance_log_rows(settings, courses, per_course_limit=250)
+    filter_options = ["All courses", *[str(course["code"]) for course in courses]]
+    preferred_course = selected_course["code"] if selected_course is not None else "All courses"
+    if st.session_state.get("attendance_course_filter") not in filter_options:
+        st.session_state["attendance_course_filter"] = preferred_course
+
+    controls_left, controls_center, controls_right = st.columns([0.65, 0.55, 0.55], gap="large")
+    with controls_left:
+        selected_filter = st.selectbox(
+            "Course filter",
+            options=filter_options,
+            key="attendance_course_filter",
+        )
+    with controls_center:
+        st.checkbox("Show only today", key="attendance_today_only")
+    with controls_right:
+        search = st.text_input(
+            "Search log",
+            key="attendance_log_search",
+            placeholder="Student name or ID",
+        )
+
+    filtered = rows
+    if selected_filter != "All courses":
+        filtered = [row for row in filtered if row["Course"] == selected_filter]
+    if st.session_state.get("attendance_today_only", False):
+        today_key = now_in_app_timezone(settings).date().isoformat()
+        filtered = [row for row in filtered if row["Date"] == today_key]
+    if search.strip():
+        search_text = search.strip().lower()
+        filtered = [
+            row
+            for row in filtered
+            if search_text in row["Student"].lower() or search_text in row["Student ID"].lower()
+        ]
+
+    metrics = st.columns(3)
+    metrics[0].metric("Events shown", len(filtered))
+    metrics[1].metric("Students represented", len({row["Student ID"] for row in filtered}))
+    metrics[2].metric("Courses represented", len({row["Course"] for row in filtered}))
+
+    with st.container(border=True):
+        st.subheader("Recent attendance events")
+        if filtered:
+            st.dataframe(filtered, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No attendance events match the current filters.")
+
+
+def _render_manager_imports_view(repo: AttendanceRepository, settings, selected_course) -> None:
+    left, right = st.columns([1.05, 0.95], gap="large")
+    with left:
+        with st.container(border=True):
+            st.subheader("Roster intake")
+            if selected_course is None:
+                st.caption("Select an existing course from the sidebar before replacing its roster.")
+            else:
+                st.caption(f"Current target course: {selected_course['code']} • {selected_course['title']}")
+                _render_roster_importer(repo, settings, selected_course)
+                students = _cached_list_students_for_course(settings.database_target, int(selected_course["id"]))
+                st.caption(f"Active roster size: {len(students)}")
+    with right:
+        with st.container(border=True):
+            st.subheader("Restore from workbook")
+            st.caption("Upload a previously exported workbook to recreate the course, timetable, roster, and attendance history.")
+            _render_report_restore_uploader(repo, settings, key_suffix="imports_workspace")
+        _render_note_card(
+            "Import strategy",
+            "Use roster replacement for everyday enrollment updates. Use workbook restore only when rebuilding a course from a prior export.",
+            tone="warning",
+        )
+
+
+def _render_manager_report_export_panel(repo: AttendanceRepository, settings, course) -> None:
+    eligibility_rows = _build_eligibility_rows(repo, settings, course)
+    students = _cached_list_students_for_course(settings.database_target, int(course["id"]))
+    schedules = _cached_list_schedules_for_course(settings.database_target, int(course["id"]))
+    attendance_records = _cached_list_course_attendance(
+        settings.database_target,
+        int(course["id"]),
+        10000,
     )
+    report_bytes = build_course_report_xlsx(
+        course=course,
+        students=students,
+        schedules=schedules,
+        attendance_records=attendance_records,
+        eligibility_rows=eligibility_rows,
+        generated_at=now_in_app_timezone(settings),
+    )
+    st.download_button(
+        "Download course report (.xlsx)",
+        data=report_bytes,
+        file_name=f"{course['code']}_attendance_report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+    st.dataframe(eligibility_rows, use_container_width=True, hide_index=True)
 
-    with overview_tab:
-        _render_manager_overview_tab(repo, settings, courses, active_course)
-    with course_tab:
-        _render_manager_course_tab(
-            repo,
-            settings,
-            selected_course,
-            selected_start_date,
-            selected_end_date,
-            selected_radius,
-            selected_absence_limit,
+
+def _render_manager_reports_view(repo: AttendanceRepository, settings, selected_course) -> None:
+    if selected_course is None:
+        _render_empty_state(
+            "Select a course to export",
+            "Reports are generated per course. Pick a course from the sidebar, then return here to download the workbook and review diagnostics.",
         )
-    with timetable_tab:
-        _render_manager_timetable_tab(repo, settings, active_course)
-    with roster_tab:
-        _render_manager_roster_tab(repo, settings, active_course)
-    with reports_tab:
-        _render_manager_reports_tab(repo, settings, active_course)
+        return
+
+    report_left, report_right = st.columns([1.12, 0.88], gap="large")
+    with report_left:
+        with st.container(border=True):
+            st.subheader("Export")
+            st.caption(f"Generate the workbook for {selected_course['code']} after reviewing the current roster and attendance records.")
+            _render_manager_report_export_panel(repo, settings, selected_course)
+    with report_right:
+        with st.container(border=True):
+            st.subheader("Course diagnostics")
+            st.caption("Run safe checks on the selected course before exporting or after a restore.")
+            _render_diagnostics_panel(repo, settings, selected_course)
+
+
+def _render_manager_settings_view(repo: AttendanceRepository, settings, courses: list[dict]) -> None:
+    metrics = st.columns(4)
+    metrics[0].metric("Courses", len(courses))
+    metrics[1].metric("Environment", settings.app_env.capitalize())
+    metrics[2].metric("OTP mode", _otp_mode_label(settings))
+    metrics[3].metric("Database", repo.backend.upper())
+
+    left, right = st.columns([1.0, 1.0], gap="large")
+    with left:
+        with st.container(border=True):
+            st.subheader("Configuration")
+            settings_rows = [
+                {"Setting": "Timezone", "Value": settings.app_timezone},
+                {"Setting": "Environment", "Value": settings.app_env},
+                {"Setting": "OTP delivery", "Value": settings.otp_delivery_mode},
+                {"Setting": "Manager username", "Value": settings.manager_username or "Not configured"},
+                {"Setting": "SMTP host", "Value": settings.smtp_host or "Not configured"},
+                {"Setting": "Database backend", "Value": repo.backend},
+            ]
+            st.dataframe(settings_rows, use_container_width=True, hide_index=True)
+    with right:
+        with st.container(border=True):
+            st.subheader("Operational checks")
+            st.caption("This is a lightweight health pass over the configured data sources.")
+            if st.button("Run system health check", key="run_system_health_check", use_container_width=True):
+                try:
+                    repo.list_courses()
+                    if courses:
+                        course_id = int(courses[0]["id"])
+                        repo.list_schedules_for_course(course_id)
+                        repo.list_students_for_course(course_id)
+                    st.success("System health check passed.")
+                except Exception as error:  # pragma: no cover - Streamlit surface
+                    st.error(_safe_health_error(error))
+        _render_note_card(
+            "Security note",
+            "This app still uses a single protected instructor account. For a fully production-grade rollout, place the back office behind organization identity and audit controls.",
+            tone="warning",
+        )
 
 
 def _render_manager_overview_tab(
@@ -1454,20 +2361,22 @@ def _render_manager_reports_tab(repo: AttendanceRepository, settings, active_cou
     _render_report_downloads(repo, settings, active_course)
 
 
-def render_student_page(repo: AttendanceRepository, settings) -> None:
+def render_student_page(repo: AttendanceRepository, settings, section: str) -> None:
     auth = st.session_state.get("student_auth")
-    _render_page_intro(
-        "Student portal",
-        "Check in with a clear guided flow",
-        "Students verify classroom presence, request a one-time code, stamp attendance, and review standing without digging through a dashboard.",
-    )
 
     if not auth:
-        intro_left, flow_right = st.columns([0.95, 1.15], gap="large")
-        with intro_left:
-            _render_student_portal_intro(settings)
+        st.session_state["student_section"] = "Start"
+        _render_route_header(
+            "Student check-in",
+            "Start",
+            "Verify classroom presence, request a one-time code, and sign in before you submit attendance.",
+            tags=[_otp_mode_label(settings), settings.app_timezone],
+        )
+        left, right = st.columns([0.9, 1.15], gap="large")
+        with left:
+            _render_student_step_rail(settings)
             _render_otp_delivery_notice(settings)
-        with flow_right:
+        with right:
             _render_student_login(repo, settings)
         return
 
@@ -1475,6 +2384,7 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
     student = repo.get_student(int(auth["student_id"]))
     if course is None or student is None:
         st.session_state["student_auth"] = None
+        st.session_state["student_section"] = "Start"
         _reset_student_access_flow(clear_student_id=False)
         st.warning("Your session is no longer valid. Please sign in again.")
         return
@@ -1483,6 +2393,7 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
     active_schedule = find_active_schedule(schedules, now_in_app_timezone(settings))
     if active_schedule is None:
         st.session_state["student_auth"] = None
+        st.session_state["student_section"] = "Start"
         _reset_student_access_flow(clear_student_id=False)
         st.warning(
             "Student access is available only during the active timetable window. "
@@ -1502,67 +2413,37 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
             int(student["id"]),
         ),
     )
+    recent_records = _cached_list_attendance(
+        settings.database_target,
+        int(course["id"]),
+        int(student["id"]),
+        30,
+    )
 
-    top_left, top_right = st.columns([2.35, 0.85], gap="large")
-    with top_left:
+    header_left, header_right = st.columns([2.9, 0.95], gap="large")
+    with header_left:
+        descriptions = {
+            "Check In": "Use this screen during class to capture location and submit attendance before the active window closes.",
+            "Status": "Review attendance standing, absence exposure, and eligibility without leaving the student app.",
+            "History": "Review your recent attendance records and confirm what has already been stamped.",
+        }
+        _render_route_header(
+            "Student check-in app",
+            section,
+            descriptions.get(section, descriptions["Check In"]),
+            tags=[course["code"], active_schedule["label"], settings.app_timezone],
+        )
+    with header_right:
         st.markdown(
-            f"""
-            <section class="aa-student-hero">
-                <span class="aa-kicker">Active class session</span>
-                <h2>{escape(course["title"])}</h2>
-                <p>
-                    {escape(course["code"])} • {escape(student["full_name"])} •
-                    Student ID {escape(str(student["university_id"]))}
-                </p>
-                <div class="aa-student-grid">
-                    <div>
-                        <span>Open window</span>
-                        <strong>{escape(active_schedule["label"])} · {escape(active_schedule["start_time"])} - {escape(active_schedule["end_time"])}</strong>
-                    </div>
-                    <div>
-                        <span>Classroom radius</span>
-                        <strong>{float(course["radius_m"]):.1f} m</strong>
-                    </div>
-                    <div>
-                        <span>Absence limit</span>
-                        <strong>{float(course["absence_limit_pct"]):.0f}%</strong>
-                    </div>
-                </div>
-            </section>
-            """,
+            f'<div class="aa-user-pill">{escape(student["full_name"])}</div>',
             unsafe_allow_html=True,
         )
-    with top_right:
-        st.markdown(
-            f'<div class="aa-user-pill">Signed in as {escape(student["full_name"])}</div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("Sign out", use_container_width=True):
+        if st.button("Sign out", key="student_signout", use_container_width=True):
             st.session_state["student_auth"] = None
+            st.session_state["student_section"] = "Start"
             _reset_student_access_flow(clear_student_id=False)
             _clear_cached_database_reads()
             st.rerun()
-
-    st.markdown(
-        f"""
-        <div class="aa-status-banner">
-            <div>
-                <span class="aa-kicker">Attendance open</span>
-                <h3>{escape(active_schedule["label"])} is live right now</h3>
-                <p>
-                    Submit your attendance while the window remains open between
-                    {escape(active_schedule["start_time"])} and {escape(active_schedule["end_time"])}.
-                </p>
-            </div>
-            <div class="aa-banner-tags">
-                <span class="aa-banner-tag">{escape(settings.app_timezone)}</span>
-                <span class="aa-banner-tag">Course {escape(course["code"])}</span>
-                <span class="aa-banner-tag">Radius {float(course["radius_m"]):.1f} m</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
     metrics = st.columns(4)
     metrics[0].metric("Attended", summary.attended_count)
@@ -1570,26 +2451,184 @@ def render_student_page(repo: AttendanceRepository, settings) -> None:
     metrics[2].metric("Meetings elapsed", summary.elapsed_meetings)
     metrics[3].metric("Total meetings", summary.total_meetings)
 
-    recent_records = _cached_list_attendance(
-        settings.database_target,
-        int(course["id"]),
-        int(student["id"]),
-        30,
-    )
-    checkin_tab, attendance_tab, status_tab = st.tabs(["Check In", "Attendance", "Standing"])
+    if section == "Status":
+        _render_student_status_workspace(summary, course, settings, active_schedule)
+        return
+    if section == "History":
+        _render_student_history_workspace(recent_records)
+        return
+    _render_student_check_in_workspace(repo, settings, course, student, active_schedule)
 
-    with checkin_tab:
-        _render_student_checkin_tab(
-            repo,
-            settings,
-            course,
-            student,
-            active_schedule,
+
+def _render_student_step_rail(settings) -> None:
+    otp_text = "shown inside the app" if settings.otp_delivery_mode == "console" else "sent to your roster email"
+    st.markdown(
+        f"""
+        <div class="aa-step-rail">
+            <div class="aa-step-item">
+                <div class="aa-step-index">1</div>
+                <div class="aa-step-content">
+                    <h4>Identify yourself</h4>
+                    <p>Enter the student ID that appears on your enrolled course roster.</p>
+                </div>
+            </div>
+            <div class="aa-step-item">
+                <div class="aa-step-index">2</div>
+                <div class="aa-step-content">
+                    <h4>Verify classroom location</h4>
+                    <p>Access opens only while a course window is active and only inside the saved classroom boundary.</p>
+                </div>
+            </div>
+            <div class="aa-step-item">
+                <div class="aa-step-index">3</div>
+                <div class="aa-step-content">
+                    <h4>Request a one-time code</h4>
+                    <p>The latest access code is {escape(otp_text)}.</p>
+                </div>
+            </div>
+            <div class="aa-step-item">
+                <div class="aa-step-index">4</div>
+                <div class="aa-step-content">
+                    <h4>Confirm attendance</h4>
+                    <p>After sign-in, capture your location again and submit the attendance stamp before the window closes.</p>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_student_check_in_workspace(
+    repo: AttendanceRepository,
+    settings,
+    course,
+    student,
+    active_schedule,
+) -> None:
+    left, right = st.columns([1.12, 0.88], gap="large")
+    with left:
+        with st.container(border=True):
+            st.subheader("Submit attendance")
+            st.caption(
+                f"{course['code']} • {course['title']} • Window {active_schedule['label']} "
+                f"({active_schedule['start_time']} - {active_schedule['end_time']})"
+            )
+            student_stamp_geo = geo_capture(
+                button_label="Share current location to stamp attendance",
+                key="student_stamp_geo_capture",
+            )
+            _handle_student_stamp_gate(student_stamp_geo)
+            if st.session_state.get("student_stamp_geolocation") is not None:
+                st.info("Location captured. Submit the attendance stamp while the class window remains open.")
+
+            if (
+                st.session_state.get("student_stamp_result") is None
+                and st.session_state.get("student_stamp_geolocation") is not None
+                and st.button("Submit attendance", key="student_submit_attendance", use_container_width=True)
+            ):
+                result = stamp_attendance(
+                    repo,
+                    settings,
+                    course=course,
+                    student=student,
+                    geolocation_payload=st.session_state["student_stamp_geolocation"],
+                )
+                st.session_state["student_stamp_result"] = {
+                    "success": result.success,
+                    "message": result.message,
+                }
+                if result.success:
+                    st.session_state["student_stamp_geolocation"] = None
+                    _clear_cached_database_reads()
+                st.rerun()
+
+            stamp_result = st.session_state.get("student_stamp_result")
+            if stamp_result:
+                if stamp_result["success"]:
+                    st.success(stamp_result["message"])
+                else:
+                    st.error(stamp_result["message"])
+
+    with right:
+        with st.container(border=True):
+            st.subheader("Session details")
+            st.markdown(
+                f"""
+                <ul class="aa-compact-list">
+                    <li><strong>Student</strong><span>{escape(student["full_name"])} · {escape(str(student["university_id"]))}</span></li>
+                    <li><strong>Course</strong><span>{escape(course["code"])} · {escape(course["title"])}</span></li>
+                    <li><strong>Open window</strong><span>{escape(active_schedule["label"])} · {escape(active_schedule["start_time"])} - {escape(active_schedule["end_time"])}</span></li>
+                    <li><strong>Radius</strong><span>{float(course["radius_m"]):.1f} meters</span></li>
+                    <li><strong>Timezone</strong><span>{escape(settings.app_timezone)}</span></li>
+                </ul>
+                """,
+                unsafe_allow_html=True,
+            )
+        _render_note_card(
+            "Check-in rule",
+            "Attendance is accepted only while this course window is active and your reported location is inside the saved classroom boundary.",
+            tone="info",
         )
-    with attendance_tab:
-        _render_student_attendance_tab(recent_records)
-    with status_tab:
-        _render_student_status_tab(summary, course, settings, active_schedule)
+
+
+def _render_student_status_workspace(summary, course, settings, active_schedule) -> None:
+    left, right = st.columns([1.0, 0.95], gap="large")
+    with left:
+        with st.container(border=True):
+            st.subheader("Attendance standing")
+            if summary.denied_exam_entry:
+                st.error("Exam entry is currently denied because you reached the absence threshold.")
+            else:
+                st.success(
+                    f"You are still eligible for exam entry. Safe absences remaining: {summary.remaining_safe_absences}."
+                )
+            st.progress(
+                int(round(max(0.0, min(summary.attendance_pct_of_total, 100.0)))),
+                text=f"Attendance recorded: {summary.attendance_pct_of_total:.1f}% of total meetings",
+            )
+            st.caption(
+                f"Absence threshold: {summary.absence_threshold} meetings • "
+                f"Absence exposure: {summary.absence_pct_of_total:.1f}% of total meetings"
+            )
+    with right:
+        with st.container(border=True):
+            st.subheader("Course policy")
+            st.markdown(
+                f"""
+                <ul class="aa-compact-list">
+                    <li><strong>Course</strong><span>{escape(course["code"])} · {escape(course["title"])}</span></li>
+                    <li><strong>Absence limit</strong><span>{float(course["absence_limit_pct"]):.0f}%</span></li>
+                    <li><strong>Current window</strong><span>{escape(active_schedule["label"])} · {escape(active_schedule["start_time"])} - {escape(active_schedule["end_time"])}</span></li>
+                    <li><strong>Timezone</strong><span>{escape(settings.app_timezone)}</span></li>
+                </ul>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def _render_student_history_workspace(recent_records: list[dict]) -> None:
+    with st.container(border=True):
+        st.subheader("Recent attendance records")
+        if recent_records:
+            st.dataframe(
+                [
+                    {
+                        "Date": row["attendance_date"],
+                        "Window": row["schedule_label"],
+                        "Stamped At": row["stamped_at"],
+                        "Distance (m)": round(float(row["distance_m"]), 2),
+                        "Accuracy (m)": round(float(row["accuracy_m"]), 2)
+                        if row["accuracy_m"] is not None
+                        else None,
+                    }
+                    for row in recent_records
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("You have not stamped any attendance yet.")
 
 
 def _render_student_checkin_tab(
@@ -1891,6 +2930,7 @@ def _render_student_login(repo: AttendanceRepository, settings) -> None:
                     "course_id": int(course["id"]),
                     "student_id": int(student["id"]),
                 }
+                st.session_state["student_section"] = "Check In"
                 st.session_state["student_stamp_result"] = None
                 st.session_state["student_stamp_geolocation"] = None
                 st.session_state["student_otp_notice"] = None
@@ -2732,7 +3772,9 @@ def _has_course_location_selection() -> bool:
 
 def _init_session_state() -> None:
     st.session_state.setdefault("manager_auth", None)
+    st.session_state.setdefault("manager_section", MANAGER_SECTIONS[0])
     st.session_state.setdefault("student_auth", None)
+    st.session_state.setdefault("student_section", "Start")
     st.session_state.setdefault("pending_university_id", "")
     st.session_state.setdefault("student_access_context", None)
     st.session_state.setdefault("student_access_geolocation", None)
