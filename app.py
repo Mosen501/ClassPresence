@@ -1162,7 +1162,7 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
                     source_name=restore_file.name,
                     content=restore_file.getvalue(),
                 )
-                st.session_state["manager_course_code"] = str(result["course_code"])
+                st.session_state["pending_manager_course_code"] = str(result["course_code"])
                 st.session_state["manager_notice"] = f"{result['course_code']} restored."
                 st.rerun()
             except Exception as error:
@@ -1177,6 +1177,7 @@ def _render_student_entry(repo: AttendanceRepository, settings) -> None:
 
 
 def _render_student_access(repo: AttendanceRepository, settings) -> None:
+    _apply_pending_student_id_reset()
     _render_topbar(settings, context="Student check-in")
     left, center, right = st.columns([0.2, 1, 0.2], gap="large")
     with center:
@@ -1718,7 +1719,7 @@ def _save_course(
                 radius_m=radius_m,
                 absence_limit_pct=absence_limit_pct,
             )
-        st.session_state["manager_course_code"] = normalized_code
+        st.session_state["pending_manager_course_code"] = normalized_code
         st.session_state["course_editor_mode"] = "existing"
         st.session_state["loaded_course_location"] = None
         st.session_state["manager_notice"] = f"{normalized_code} saved."
@@ -1857,12 +1858,17 @@ def _handle_stamp_location(payload) -> None:
 
 def _reset_student_access(*, clear_id: bool) -> None:
     if clear_id:
-        st.session_state["pending_university_id"] = ""
+        st.session_state["clear_pending_university_id"] = True
     st.session_state["student_access_context"] = None
     st.session_state["student_otp_requested"] = False
     st.session_state["student_otp_notice"] = None
     st.session_state["student_otp_preview_code"] = None
     st.session_state["student_access_processed"] = None
+
+
+def _apply_pending_student_id_reset() -> None:
+    if st.session_state.pop("clear_pending_university_id", False):
+        st.session_state["pending_university_id"] = ""
 
 
 def _sign_out_student() -> None:
@@ -1886,6 +1892,9 @@ def _selected_course(courses):
 
 def _normalize_course_choice(courses) -> None:
     options = [str(course["code"]) for course in courses]
+    pending = st.session_state.pop("pending_manager_course_code", None)
+    if pending in options:
+        st.session_state["manager_course_code"] = pending
     current = st.session_state.get("manager_course_code")
     if options and current not in options:
         st.session_state["manager_course_code"] = options[0]
@@ -1906,6 +1915,7 @@ def _init_session_state() -> None:
         "manager_auth": None,
         "manager_section": MANAGER_SECTIONS[0],
         "manager_course_code": "No courses",
+        "pending_manager_course_code": None,
         "course_editor_mode": "existing",
         "course_latitude": 0.0,
         "course_longitude": 0.0,
@@ -1915,6 +1925,7 @@ def _init_session_state() -> None:
         "student_auth": None,
         "student_section": STUDENT_SECTIONS[0],
         "pending_university_id": "",
+        "clear_pending_university_id": False,
         "student_access_context": None,
         "student_access_processed": None,
         "student_otp_requested": False,
