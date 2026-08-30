@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import quote
 
-
 TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -26,6 +25,11 @@ class Settings:
     smtp_password: str
     smtp_sender: str
     smtp_use_tls: bool
+    webauthn_rp_id: str = ""
+    webauthn_origin: str = ""
+    webauthn_rp_name: str = "ClassPresence"
+    location_max_age_seconds: int = 90
+    location_max_accuracy_m: float = 50.0
 
     @property
     def is_development(self) -> bool:
@@ -54,6 +58,15 @@ def load_settings(secrets: Mapping[str, Any] | None = None) -> Settings:
         smtp_password=_get_value("SMTP_PASSWORD", "", secrets),
         smtp_sender=_get_value("SMTP_SENDER", "", secrets),
         smtp_use_tls=_get_bool("SMTP_USE_TLS", True, secrets),
+        webauthn_rp_id=_get_value("WEBAUTHN_RP_ID", "", secrets).strip(),
+        webauthn_origin=_get_value("WEBAUTHN_ORIGIN", "", secrets).strip().rstrip("/"),
+        webauthn_rp_name=_get_value("WEBAUTHN_RP_NAME", "ClassPresence", secrets).strip(),
+        location_max_age_seconds=int(
+            _get_value("LOCATION_MAX_AGE_SECONDS", "90", secrets)
+        ),
+        location_max_accuracy_m=float(
+            _get_value("LOCATION_MAX_ACCURACY_M", "50", secrets)
+        ),
     )
 
 

@@ -74,7 +74,25 @@ _SQLITE_SCHEMA_STATEMENTS = (
         expires_at TEXT NOT NULL,
         used_at TEXT,
         invalidated_at TEXT,
+        device_binding_hash TEXT,
+        credential_id TEXT,
         created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS registered_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+        credential_id TEXT NOT NULL UNIQUE,
+        public_key TEXT NOT NULL,
+        sign_count INTEGER NOT NULL DEFAULT 0,
+        device_binding_hash TEXT NOT NULL UNIQUE,
+        transports TEXT NOT NULL DEFAULT '[]',
+        aaguid TEXT NOT NULL DEFAULT '',
+        credential_device_type TEXT NOT NULL DEFAULT '',
+        credential_backed_up INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT NOT NULL
     )
     """,
     """
@@ -90,7 +108,27 @@ _SQLITE_SCHEMA_STATEMENTS = (
         accuracy_m REAL,
         distance_m REAL NOT NULL,
         device_info TEXT NOT NULL,
+        registered_device_id INTEGER REFERENCES registered_devices(id) ON DELETE SET NULL,
+        device_binding_hash TEXT,
         UNIQUE(course_id, student_id, schedule_id, attendance_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS proxy_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
+        student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+        schedule_id INTEGER REFERENCES course_schedules(id) ON DELETE SET NULL,
+        attendance_date TEXT,
+        alert_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        message TEXT NOT NULL,
+        device_binding_hash TEXT,
+        latitude REAL,
+        longitude REAL,
+        accuracy_m REAL,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
     )
     """,
 )
@@ -153,7 +191,25 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         expires_at TEXT NOT NULL,
         used_at TEXT,
         invalidated_at TEXT,
+        device_binding_hash TEXT,
+        credential_id TEXT,
         created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS registered_devices (
+        id BIGSERIAL PRIMARY KEY,
+        student_id BIGINT NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+        credential_id TEXT NOT NULL UNIQUE,
+        public_key TEXT NOT NULL,
+        sign_count BIGINT NOT NULL DEFAULT 0,
+        device_binding_hash TEXT NOT NULL UNIQUE,
+        transports TEXT NOT NULL DEFAULT '[]',
+        aaguid TEXT NOT NULL DEFAULT '',
+        credential_device_type TEXT NOT NULL DEFAULT '',
+        credential_backed_up INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT NOT NULL
     )
     """,
     """
@@ -169,7 +225,27 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         accuracy_m DOUBLE PRECISION,
         distance_m DOUBLE PRECISION NOT NULL,
         device_info TEXT NOT NULL,
+        registered_device_id BIGINT REFERENCES registered_devices(id) ON DELETE SET NULL,
+        device_binding_hash TEXT,
         UNIQUE(course_id, student_id, schedule_id, attendance_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS proxy_alerts (
+        id BIGSERIAL PRIMARY KEY,
+        course_id BIGINT REFERENCES courses(id) ON DELETE CASCADE,
+        student_id BIGINT REFERENCES students(id) ON DELETE CASCADE,
+        schedule_id BIGINT REFERENCES course_schedules(id) ON DELETE SET NULL,
+        attendance_date TEXT,
+        alert_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        message TEXT NOT NULL,
+        device_binding_hash TEXT,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        accuracy_m DOUBLE PRECISION,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
     )
     """,
 )
@@ -354,9 +430,13 @@ class AttendanceRepository:
     def list_students_for_course(self, course_id: int) -> list[Record]:
         return self._fetchall(
             """
-            SELECT s.*
+            SELECT
+                s.*,
+                rd.id AS registered_device_id,
+                rd.last_used_at AS device_last_used_at
             FROM students s
             INNER JOIN course_students cs ON cs.student_id = s.id
+            LEFT JOIN registered_devices rd ON rd.student_id = s.id
             WHERE cs.course_id = ?
             ORDER BY s.full_name
             """,
@@ -515,13 +595,15 @@ class AttendanceRepository:
         delivery_target: str,
         expires_at: str,
         created_at: str,
+        device_binding_hash: str | None = None,
+        credential_id: str | None = None,
     ) -> int:
         query = """
             INSERT INTO otp_codes (
                 course_id, student_id, code_hash, delivery_method, delivery_target,
-                expires_at, created_at
+                expires_at, device_binding_hash, credential_id, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         if self.backend == "postgres":
             query += " RETURNING id"
@@ -534,6 +616,8 @@ class AttendanceRepository:
                 delivery_method,
                 delivery_target,
                 expires_at,
+                device_binding_hash,
+                credential_id,
                 created_at,
             ),
             returns_id=True,
@@ -570,6 +654,179 @@ class AttendanceRepository:
     def mark_otp_used(self, otp_id: int, used_at: str) -> None:
         self._execute("UPDATE otp_codes SET used_at = ? WHERE id = ?", (used_at, otp_id))
 
+    def get_registered_device_for_student(self, student_id: int) -> Record | None:
+        return self._fetchone(
+            "SELECT * FROM registered_devices WHERE student_id = ?",
+            (student_id,),
+        )
+
+    def get_registered_device_by_binding_hash(self, device_binding_hash: str) -> Record | None:
+        return self._fetchone(
+            "SELECT * FROM registered_devices WHERE device_binding_hash = ?",
+            (device_binding_hash,),
+        )
+
+    def create_registered_device(
+        self,
+        *,
+        student_id: int,
+        credential_id: str,
+        public_key: str,
+        sign_count: int,
+        device_binding_hash: str,
+        transports: str,
+        aaguid: str,
+        credential_device_type: str,
+        credential_backed_up: bool,
+        created_at: str,
+    ) -> int:
+        query = """
+            INSERT INTO registered_devices (
+                student_id, credential_id, public_key, sign_count, device_binding_hash,
+                transports, aaguid, credential_device_type, credential_backed_up,
+                created_at, last_used_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        if self.backend == "postgres":
+            query += " RETURNING id"
+        return self._execute(
+            query,
+            (
+                student_id,
+                credential_id,
+                public_key,
+                sign_count,
+                device_binding_hash,
+                transports,
+                aaguid,
+                credential_device_type,
+                int(credential_backed_up),
+                created_at,
+                created_at,
+            ),
+            returns_id=True,
+        )
+
+    def update_registered_device_usage(
+        self,
+        *,
+        device_id: int,
+        sign_count: int,
+        last_used_at: str,
+    ) -> None:
+        self._execute(
+            """
+            UPDATE registered_devices
+            SET sign_count = ?, last_used_at = ?
+            WHERE id = ?
+            """,
+            (sign_count, last_used_at, device_id),
+        )
+
+    def delete_registered_device(self, *, student_id: int) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                self._sql("DELETE FROM registered_devices WHERE student_id = ?"),
+                (student_id,),
+            )
+            return cursor.rowcount > 0
+
+    def find_attendance_for_device_window(
+        self,
+        *,
+        course_id: int,
+        schedule_id: int,
+        attendance_date: str,
+        device_binding_hash: str,
+    ) -> Record | None:
+        return self._fetchone(
+            """
+            SELECT ar.*, s.full_name, s.university_id
+            FROM attendance_records ar
+            INNER JOIN students s ON s.id = ar.student_id
+            WHERE ar.course_id = ?
+              AND ar.schedule_id = ?
+              AND ar.attendance_date = ?
+              AND ar.device_binding_hash = ?
+            LIMIT 1
+            """,
+            (course_id, schedule_id, attendance_date, device_binding_hash),
+        )
+
+    def create_proxy_alert(
+        self,
+        *,
+        course_id: int | None,
+        student_id: int | None,
+        schedule_id: int | None,
+        attendance_date: str | None,
+        alert_type: str,
+        severity: str,
+        message: str,
+        device_binding_hash: str | None,
+        latitude: float | None,
+        longitude: float | None,
+        accuracy_m: float | None,
+        created_at: str,
+    ) -> int:
+        query = """
+            INSERT INTO proxy_alerts (
+                course_id, student_id, schedule_id, attendance_date, alert_type,
+                severity, message, device_binding_hash, latitude, longitude,
+                accuracy_m, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        if self.backend == "postgres":
+            query += " RETURNING id"
+        return self._execute(
+            query,
+            (
+                course_id,
+                student_id,
+                schedule_id,
+                attendance_date,
+                alert_type,
+                severity,
+                message,
+                device_binding_hash,
+                latitude,
+                longitude,
+                accuracy_m,
+                created_at,
+            ),
+            returns_id=True,
+        )
+
+    def list_proxy_alerts(self, *, course_id: int, limit: int = 500) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT
+                pa.*,
+                s.full_name,
+                s.university_id,
+                cs.label AS schedule_label
+            FROM proxy_alerts pa
+            LEFT JOIN students s ON s.id = pa.student_id
+            LEFT JOIN course_schedules cs ON cs.id = pa.schedule_id
+            WHERE pa.course_id = ?
+            ORDER BY pa.created_at DESC
+            LIMIT ?
+            """,
+            (course_id, limit),
+        )
+
+    def resolve_proxy_alert(self, *, alert_id: int, resolved_at: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                self._sql(
+                    "UPDATE proxy_alerts SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL"
+                ),
+                (resolved_at, alert_id),
+            )
+            return cursor.rowcount > 0
+
     def attendance_exists(
         self,
         *,
@@ -604,14 +861,17 @@ class AttendanceRepository:
         accuracy_m: float | None,
         distance_m: float,
         device_info: str,
+        registered_device_id: int | None = None,
+        device_binding_hash: str | None = None,
     ) -> None:
         self._execute(
             """
             INSERT INTO attendance_records (
                 course_id, student_id, schedule_id, attendance_date, stamped_at,
-                student_latitude, student_longitude, accuracy_m, distance_m, device_info
+                student_latitude, student_longitude, accuracy_m, distance_m, device_info,
+                registered_device_id, device_binding_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 course_id,
@@ -624,6 +884,8 @@ class AttendanceRepository:
                 accuracy_m,
                 distance_m,
                 device_info,
+                registered_device_id,
+                device_binding_hash,
             ),
         )
 
@@ -677,6 +939,9 @@ class AttendanceRepository:
                 ar.attendance_date,
                 ar.stamped_at,
                 ar.distance_m,
+                ar.accuracy_m,
+                ar.registered_device_id,
+                ar.device_binding_hash,
                 cs.label AS schedule_label
             FROM attendance_records ar
             INNER JOIN students s ON s.id = ar.student_id
@@ -734,18 +999,26 @@ class AttendanceRepository:
 
     def _migrate_schema(self, connection) -> None:
         if self.backend == "postgres":
-            rows = connection.execute(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'courses'
-                  AND table_schema = current_schema()
-                """
-            ).fetchall()
-            course_columns = {str(row["column_name"]) for row in rows}
+            course_columns = self._postgres_columns(connection, "courses")
             if "end_date" not in course_columns:
                 connection.execute("ALTER TABLE courses ADD COLUMN end_date TEXT")
                 connection.execute("UPDATE courses SET end_date = start_date WHERE end_date IS NULL")
+            otp_columns = self._postgres_columns(connection, "otp_codes")
+            if "device_binding_hash" not in otp_columns:
+                connection.execute("ALTER TABLE otp_codes ADD COLUMN device_binding_hash TEXT")
+            if "credential_id" not in otp_columns:
+                connection.execute("ALTER TABLE otp_codes ADD COLUMN credential_id TEXT")
+            attendance_columns = self._postgres_columns(connection, "attendance_records")
+            if "registered_device_id" not in attendance_columns:
+                connection.execute(
+                    "ALTER TABLE attendance_records ADD COLUMN registered_device_id BIGINT "
+                    "REFERENCES registered_devices(id) ON DELETE SET NULL"
+                )
+            if "device_binding_hash" not in attendance_columns:
+                connection.execute(
+                    "ALTER TABLE attendance_records ADD COLUMN device_binding_hash TEXT"
+                )
+            self._create_security_indexes(connection)
             return
 
         rows = connection.execute("PRAGMA table_info(courses)").fetchall()
@@ -753,6 +1026,51 @@ class AttendanceRepository:
         if "end_date" not in course_columns:
             connection.execute("ALTER TABLE courses ADD COLUMN end_date TEXT")
             connection.execute("UPDATE courses SET end_date = start_date WHERE end_date IS NULL")
+        otp_columns = self._sqlite_columns(connection, "otp_codes")
+        if "device_binding_hash" not in otp_columns:
+            connection.execute("ALTER TABLE otp_codes ADD COLUMN device_binding_hash TEXT")
+        if "credential_id" not in otp_columns:
+            connection.execute("ALTER TABLE otp_codes ADD COLUMN credential_id TEXT")
+        attendance_columns = self._sqlite_columns(connection, "attendance_records")
+        if "registered_device_id" not in attendance_columns:
+            connection.execute("ALTER TABLE attendance_records ADD COLUMN registered_device_id INTEGER")
+        if "device_binding_hash" not in attendance_columns:
+            connection.execute("ALTER TABLE attendance_records ADD COLUMN device_binding_hash TEXT")
+        self._create_security_indexes(connection)
+
+    def _postgres_columns(self, connection, table_name: str) -> set[str]:
+        rows = connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = %s
+              AND table_schema = current_schema()
+            """,
+            (table_name,),
+        ).fetchall()
+        return {str(row["column_name"]) for row in rows}
+
+    @staticmethod
+    def _sqlite_columns(connection, table_name: str) -> set[str]:
+        rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {str(row["name"]) for row in rows}
+
+    def _create_security_indexes(self, connection) -> None:
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_attendance_device_window
+            ON attendance_records (
+                course_id, schedule_id, attendance_date, device_binding_hash
+            )
+            WHERE device_binding_hash IS NOT NULL
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_proxy_alerts_course_created
+            ON proxy_alerts (course_id, created_at)
+            """
+        )
 
     def _fetchone(self, query: str, parameters: Iterable[Any] = ()) -> Record | None:
         with self._connection() as connection:

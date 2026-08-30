@@ -8,14 +8,17 @@ from zoneinfo import ZoneInfo
 
 from attendance_app.config import Settings
 from attendance_app.database import AttendanceRepository
+from attendance_app.passkeys import RegisteredPasskey, VerifiedPasskey, hash_device_token
 from attendance_app.services import (
+    StudentAccessContext,
+    authenticate_student_passkey,
     otp_delivery_configuration_error,
+    register_student_passkey,
     resolve_student_access_context,
     stamp_attendance,
     verify_login_code_for_access_context,
 )
 from attendance_app.utils import hash_otp
-
 
 TEST_COURSE_LATITUDE = 1.234567
 TEST_COURSE_LONGITUDE = -2.345678
@@ -58,7 +61,9 @@ class ServicesTestCase(unittest.TestCase):
                 geolocation_payload={
                     "latitude": TEST_COURSE_LATITUDE,
                     "longitude": TEST_COURSE_LONGITUDE,
+                    "accuracy_m": 5,
                     "captured_at": now.isoformat(),
+                    "device_token": "test-device-token-00000001",
                 },
             )
 
@@ -143,7 +148,9 @@ class ServicesTestCase(unittest.TestCase):
                     geolocation_payload={
                         "latitude": original_lat,
                         "longitude": original_lon,
+                        "accuracy_m": 5,
                         "captured_at": now.isoformat(),
+                        "device_token": "test-device-token-00000001",
                     },
                 )
 
@@ -154,13 +161,183 @@ class ServicesTestCase(unittest.TestCase):
                 geolocation_payload={
                     "latitude": new_lat,
                     "longitude": new_lon,
+                    "accuracy_m": 5,
                     "captured_at": now.isoformat(),
+                    "device_token": "test-device-token-00000001",
                 },
             )
 
         self.assertAlmostEqual(access_context.course_latitude, new_lat)
         self.assertAlmostEqual(access_context.course_longitude, new_lon)
         self.assertAlmostEqual(access_context.distance_m, 0.0)
+
+    def test_location_validation_rejects_stale_and_inaccurate_payloads(self) -> None:
+        self._seed_course()
+        now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        base_payload = {
+            "latitude": TEST_COURSE_LATITUDE,
+            "longitude": TEST_COURSE_LONGITUDE,
+            "accuracy_m": 5,
+            "captured_at": now.isoformat(),
+            "device_token": "test-device-token-00000001",
+        }
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            with self.assertRaisesRegex(ValueError, "Location expired"):
+                resolve_student_access_context(
+                    self.repo,
+                    self.settings,
+                    university_id="20260001",
+                    geolocation_payload={
+                        **base_payload,
+                        "captured_at": "2026-07-01T09:55:00+03:00",
+                    },
+                )
+            with self.assertRaisesRegex(ValueError, "Location accuracy"):
+                resolve_student_access_context(
+                    self.repo,
+                    self.settings,
+                    university_id="20260001",
+                    geolocation_payload={**base_payload, "accuracy_m": 75},
+                )
+
+    def test_passkey_registration_and_authentication_bind_one_device(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        payload = {
+            "latitude": TEST_COURSE_LATITUDE,
+            "longitude": TEST_COURSE_LONGITUDE,
+            "accuracy_m": 5,
+            "captured_at": now.isoformat(),
+            "device_token": "test-device-token-00000001",
+        }
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            context = resolve_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                geolocation_payload=payload,
+            )
+            with patch(
+                "attendance_app.services.complete_registration",
+                return_value=RegisteredPasskey(
+                    credential_id="credential-one",
+                    public_key="public-key-one",
+                    sign_count=0,
+                    aaguid="test-aaguid",
+                    credential_device_type="single_device",
+                    credential_backed_up=False,
+                    transports='["internal"]',
+                ),
+            ):
+                registered = register_student_passkey(
+                    self.repo,
+                    self.settings,
+                    access_context=context,
+                    credential={},
+                    device_token=payload["device_token"],
+                    expected_challenge="challenge",
+                    expected_rp_id="localhost",
+                    expected_origin="http://localhost:8501",
+                )
+
+            with patch(
+                "attendance_app.services.complete_authentication",
+                return_value=VerifiedPasskey(
+                    credential_id="credential-one",
+                    sign_count=1,
+                ),
+            ):
+                verified = authenticate_student_passkey(
+                    self.repo,
+                    self.settings,
+                    access_context=StudentAccessContext(
+                        **{**context.__dict__, "device_enrolled": True}
+                    ),
+                    credential={},
+                    device_token=payload["device_token"],
+                    expected_challenge="challenge",
+                    expected_rp_id="localhost",
+                    expected_origin="http://localhost:8501",
+                )
+
+        self.assertEqual(verified["device_id"], registered["device_id"])
+        device = self.repo.get_registered_device_for_student(int(student["id"]))
+        assert device is not None
+        self.assertEqual(int(device["sign_count"]), 1)
+
+    def test_registered_device_blocks_another_student_and_creates_alert(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        device_hash = hash_device_token(
+            "test-device-token-00000001",
+            self.settings.otp_pepper,
+        )
+        self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="credential-one",
+            public_key="public-key-one",
+            sign_count=0,
+            device_binding_hash=device_hash,
+            transports="[]",
+            aaguid="",
+            credential_device_type="single_device",
+            credential_backed_up=False,
+            created_at=now.isoformat(),
+        )
+        self.repo.add_student_to_course(
+            course_id=int(course["id"]),
+            full_name="SECOND STUDENT",
+            university_id="20260002",
+            email="second@example.edu",
+            phone="",
+            created_at=now.isoformat(),
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            with self.assertRaisesRegex(ValueError, "already registered to another student"):
+                resolve_student_access_context(
+                    self.repo,
+                    self.settings,
+                    university_id="20260002",
+                    geolocation_payload={
+                        "latitude": TEST_COURSE_LATITUDE,
+                        "longitude": TEST_COURSE_LONGITUDE,
+                        "accuracy_m": 5,
+                        "captured_at": now.isoformat(),
+                        "device_token": "test-device-token-00000001",
+                    },
+                )
+
+        alerts = self.repo.list_proxy_alerts(course_id=int(course["id"]))
+        self.assertEqual(alerts[0]["alert_type"], "device_linked_to_another_student")
+
+    def test_otp_is_rejected_on_a_different_device(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        self.repo.create_otp(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            code_hash=hash_otp("123456", self.settings.otp_pepper),
+            delivery_method="email",
+            delivery_target="masa@example.edu",
+            expires_at=datetime(2026, 7, 1, 10, 10, tzinfo=ZoneInfo("Asia/Riyadh")).isoformat(),
+            created_at=now.isoformat(),
+            device_binding_hash="expected-device-hash",
+            credential_id="credential-one",
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            with self.assertRaisesRegex(ValueError, "device that requested it"):
+                verify_login_code_for_access_context(
+                    self.repo,
+                    self.settings,
+                    course_id=int(course["id"]),
+                    student_id=int(student["id"]),
+                    code="123456",
+                    device_binding_hash="different-device-hash",
+                    credential_id="credential-one",
+                )
 
     def test_delete_schedule_removes_existing_time_window(self) -> None:
         course, _student = self._seed_course()

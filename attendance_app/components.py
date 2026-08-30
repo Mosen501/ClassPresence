@@ -4,7 +4,6 @@ from pathlib import Path
 
 import streamlit.components.v1 as components
 
-
 _COMPONENT_PATH = Path(__file__).resolve().parent / "frontend" / "geo_capture"
 _geo_capture = components.declare_component("geo_capture", path=str(_COMPONENT_PATH))
 _LOCATION_PICKER_PATH = Path(__file__).resolve().parent / "frontend" / "location_picker"
@@ -12,6 +11,8 @@ _location_picker = components.declare_component(
     "location_picker",
     path=str(_LOCATION_PICKER_PATH),
 )
+_PASSKEY_PATH = Path(__file__).resolve().parent / "frontend" / "passkey"
+_passkey = components.declare_component("passkey", path=str(_PASSKEY_PATH))
 
 
 def geo_capture(button_label: str, key: str):
@@ -35,3 +36,12 @@ def location_picker(
         default=None,
     )
 
+
+def passkey_action(*, action: str, options_json: str, operation_id: str, key: str):
+    return _passkey(
+        action=action,
+        optionsJson=options_json,
+        operationId=operation_id,
+        key=key,
+        default=None,
+    )

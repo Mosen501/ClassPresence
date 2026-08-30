@@ -2,7 +2,7 @@
 
 AttendancApp is a Streamlit-based attendance platform for university classes. It gives academic managers a protected portal for configuring courses, defining class meeting windows, syncing official rosters, exporting Excel reports, and geofencing attendance to a configurable classroom radius.
 
-Students sign in with a one-time password tied to the email address on their course roster, stamp attendance only during approved schedule windows, and view their attendance statistics in real time. The application also flags exam ineligibility when absences reach 20% of the configured total meetings.
+Students sign in with a one-time password tied to the email address on their course roster, verify an enrolled passkey, stamp attendance only during approved schedule windows, and view their attendance statistics in real time. The application also flags exam ineligibility when absences reach 20% of the configured total meetings.
 
 ## Features
 
@@ -11,6 +11,10 @@ Students sign in with a one-time password tied to the email address on their cou
 - Bulk student import from `.xlsx` or `.csv` with `student id`, `student name`, and `email` columns
 - Roster-only enrollment workflow so students must exist on the uploaded course roster
 - Student portal with roster-linked one-time password login
+- Passkey enrollment and verification bound to the student's registered browser device
+- OTP redemption restricted to the browser that requested the code
+- One-student-per-device enforcement for every lecture window
+- Security incident log for blocked proxy attempts with manager review and device reset
 - Excel workbook export for course details, roster, timetable, attendance, and eligibility reports
 - Email-based OTP delivery, with a development-friendly console fallback
 - Geofenced attendance stamping within a configurable radius that defaults to 3 meters
@@ -83,10 +87,18 @@ Copy `.env.example` values into your shell environment or deployment platform.
 | `SMTP_PASSWORD` | SMTP password | unset |
 | `SMTP_SENDER` | From-address for email OTP | unset |
 | `SMTP_USE_TLS` | Use STARTTLS | `true` |
+| `WEBAUTHN_RP_ID` | Passkey relying-party hostname; inferred from the app URL when unset | unset |
+| `WEBAUTHN_ORIGIN` | Exact public app origin, such as `https://your-app.streamlit.app` | inferred |
+| `WEBAUTHN_RP_NAME` | Name shown by the device during passkey enrollment | `ClassPresence` |
+| `LOCATION_MAX_AGE_SECONDS` | Maximum age of accepted location evidence | `90` |
+| `LOCATION_MAX_ACCURACY_M` | Maximum accepted GPS accuracy radius | `50` |
 
 ## Operating Notes
 
 - Browser geolocation usually requires `localhost` during local development or HTTPS in deployment.
+- Passkeys require `localhost` or HTTPS. For production, set `WEBAUTHN_ORIGIN` and `WEBAUTHN_RP_ID` if the public URL cannot be inferred correctly.
+- A student enrolls one device after the first successful OTP. Returning check-ins require that device's passkey before a new OTP is issued.
+- If a student replaces or clears a registered browser, a manager can reset the device from the Security page and the student can enroll again.
 - The manager location picker uses OpenStreetMap tiles in the browser, so internet access helps the map render during local testing.
 - GPS accuracy can drift indoors. The app enforces the configured radius, but device-reported accuracy should still be reviewed during rollout.
 - The first run creates the database schema automatically for either SQLite or PostgreSQL.
@@ -118,6 +130,8 @@ ATTENDANCE_DB_URL = "postgresql://attendance_user:strong-password@db-host.exampl
 APP_ENV = "production"
 APP_TIMEZONE = "Asia/Riyadh"
 OTP_DELIVERY_MODE = "email"
+WEBAUTHN_ORIGIN = "https://your-app.streamlit.app"
+WEBAUTHN_RP_ID = "your-app.streamlit.app"
 ```
 
 If your password contains special URL characters, it is often easier to use separate secrets instead of a single URL:
@@ -132,6 +146,8 @@ ATTENDANCE_DB_SSLMODE = "require"
 APP_ENV = "production"
 APP_TIMEZONE = "Asia/Riyadh"
 OTP_DELIVERY_MODE = "email"
+WEBAUTHN_ORIGIN = "https://your-app.streamlit.app"
+WEBAUTHN_RP_ID = "your-app.streamlit.app"
 ```
 
 With this setup:

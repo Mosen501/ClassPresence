@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import hmac
 import json
 import smtplib
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
 from attendance_app.config import Settings
 from attendance_app.database import AttendanceRepository
+from attendance_app.passkeys import (
+    complete_authentication,
+    complete_registration,
+    hash_device_token,
+)
 from attendance_app.utils import (
     AttendanceSummary,
     build_attendance_summary,
@@ -16,8 +22,8 @@ from attendance_app.utils import (
     generate_otp,
     hash_otp,
     haversine_distance_m,
-    parse_iso_date,
     parse_hhmm,
+    parse_iso_date,
 )
 
 
@@ -51,6 +57,8 @@ class StudentAccessContext:
     schedule_end_time: str
     distance_m: float
     radius_m: float
+    device_binding_hash: str
+    device_enrolled: bool
 
 
 def otp_delivery_configuration_error(settings: Settings) -> str | None:
@@ -112,9 +120,12 @@ def resolve_student_access_context(
     if not student_contexts:
         raise ValueError("Student ID was not found in any course roster.")
 
-    latitude = float(geolocation_payload["latitude"])
-    longitude = float(geolocation_payload["longitude"])
     now = now_in_app_timezone(settings)
+    latitude, longitude, _accuracy_m, device_binding_hash = _validate_location_payload(
+        geolocation_payload,
+        settings,
+        now,
+    )
 
     active_but_outside: list[tuple] = []
     eligible_contexts: list[StudentAccessContext] = []
@@ -154,12 +165,59 @@ def resolve_student_access_context(
                 schedule_end_time=str(active_schedule["end_time"]),
                 distance_m=distance_m,
                 radius_m=float(context["radius_m"]),
+                device_binding_hash=device_binding_hash,
+                device_enrolled=False,
             )
         )
 
     if eligible_contexts:
         eligible_contexts.sort(key=lambda item: (item.distance_m, item.course_code))
-        return eligible_contexts[0]
+        selected = eligible_contexts[0]
+        registered_device = repo.get_registered_device_for_student(selected.student_id)
+        conflicting_device = repo.get_registered_device_by_binding_hash(device_binding_hash)
+        if (
+            conflicting_device is not None
+            and int(conflicting_device["student_id"]) != selected.student_id
+        ):
+            _record_proxy_alert(
+                repo,
+                now=now,
+                course_id=selected.course_id,
+                student_id=selected.student_id,
+                schedule_id=selected.schedule_id,
+                alert_type="device_linked_to_another_student",
+                severity="high",
+                message="This device is already registered to another student.",
+                device_binding_hash=device_binding_hash,
+                geolocation_payload=geolocation_payload,
+            )
+            raise ValueError("This device is already registered to another student.")
+        if (
+            registered_device is not None
+            and not hmac.compare_digest(
+                str(registered_device["device_binding_hash"]),
+                device_binding_hash,
+            )
+        ):
+            _record_proxy_alert(
+                repo,
+                now=now,
+                course_id=selected.course_id,
+                student_id=selected.student_id,
+                schedule_id=selected.schedule_id,
+                alert_type="unrecognized_device",
+                severity="high",
+                message="A non-registered device attempted to access this student account.",
+                device_binding_hash=device_binding_hash,
+                geolocation_payload=geolocation_payload,
+            )
+            raise ValueError("Use your registered device or ask the manager to reset it.")
+        return StudentAccessContext(
+            **{
+                **selected.__dict__,
+                "device_enrolled": registered_device is not None,
+            }
+        )
 
     if active_but_outside:
         nearest = min(active_but_outside, key=lambda item: item[2])
@@ -180,17 +238,35 @@ def request_login_code_for_access_context(
     settings: Settings,
     *,
     access_context: StudentAccessContext,
+    verified_device: dict | None = None,
 ) -> OTPRequestResult:
     course = repo.get_course(access_context.course_id)
     student = repo.get_student(access_context.student_id)
     if course is None or student is None:
         raise ValueError("Student access context is no longer valid.")
 
+    registered_device = repo.get_registered_device_for_student(access_context.student_id)
+    credential_id = None
+    if registered_device is not None:
+        if not verified_device:
+            raise ValueError("Verify the registered device before requesting a code.")
+        if (
+            int(verified_device.get("device_id", 0)) != int(registered_device["id"])
+            or not hmac.compare_digest(
+                str(verified_device.get("device_binding_hash", "")),
+                str(registered_device["device_binding_hash"]),
+            )
+        ):
+            raise ValueError("The verified passkey does not match this student device.")
+        credential_id = str(registered_device["credential_id"])
+
     return _issue_login_code(
         repo,
         settings,
         course=course,
         student=student,
+        device_binding_hash=access_context.device_binding_hash,
+        credential_id=credential_id,
     )
 
 
@@ -201,6 +277,8 @@ def verify_login_code_for_access_context(
     course_id: int,
     student_id: int,
     code: str,
+    device_binding_hash: str | None = None,
+    credential_id: str | None = None,
 ):
     course = repo.get_course(course_id)
     if course is None:
@@ -226,11 +304,148 @@ def verify_login_code_for_access_context(
     if otp_record is None:
         raise ValueError("No active login code was found. Generate a new code.")
 
+    expected_device_hash = str(otp_record.get("device_binding_hash") or "")
+    if expected_device_hash and not hmac.compare_digest(
+        expected_device_hash,
+        str(device_binding_hash or ""),
+    ):
+        raise ValueError("This code must be verified on the device that requested it.")
+    expected_credential_id = str(otp_record.get("credential_id") or "")
+    if expected_credential_id and not hmac.compare_digest(
+        expected_credential_id,
+        str(credential_id or ""),
+    ):
+        raise ValueError("This code is not bound to the verified passkey.")
+
     if hash_otp(code.strip(), settings.otp_pepper) != otp_record["code_hash"]:
         raise ValueError("The one-time code is invalid.")
 
     repo.mark_otp_used(int(otp_record["id"]), now.isoformat())
     return course, student
+
+
+def register_student_passkey(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    access_context: StudentAccessContext,
+    credential: dict,
+    device_token: str,
+    expected_challenge: str,
+    expected_rp_id: str,
+    expected_origin: str,
+) -> dict:
+    now = now_in_app_timezone(settings)
+    device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
+    if not hmac.compare_digest(device_binding_hash, access_context.device_binding_hash):
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=access_context.course_id,
+            student_id=access_context.student_id,
+            schedule_id=access_context.schedule_id,
+            alert_type="device_changed_during_registration",
+            severity="high",
+            message="The browser identity changed during passkey registration.",
+            device_binding_hash=device_binding_hash,
+        )
+        raise ValueError("Device identity changed. Start the check-in again.")
+
+    existing_for_student = repo.get_registered_device_for_student(access_context.student_id)
+    if existing_for_student is not None:
+        raise ValueError("This student already has a registered device.")
+    existing_for_device = repo.get_registered_device_by_binding_hash(device_binding_hash)
+    if existing_for_device is not None:
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=access_context.course_id,
+            student_id=access_context.student_id,
+            schedule_id=access_context.schedule_id,
+            alert_type="device_linked_to_another_student",
+            severity="high",
+            message="A device registration was blocked because it belongs to another student.",
+            device_binding_hash=device_binding_hash,
+        )
+        raise ValueError("This device is already registered to another student.")
+
+    passkey = complete_registration(
+        credential=credential,
+        expected_challenge=expected_challenge,
+        expected_rp_id=expected_rp_id,
+        expected_origin=expected_origin,
+    )
+    device_id = repo.create_registered_device(
+        student_id=access_context.student_id,
+        credential_id=passkey.credential_id,
+        public_key=passkey.public_key,
+        sign_count=passkey.sign_count,
+        device_binding_hash=device_binding_hash,
+        transports=passkey.transports,
+        aaguid=passkey.aaguid,
+        credential_device_type=passkey.credential_device_type,
+        credential_backed_up=passkey.credential_backed_up,
+        created_at=now.isoformat(),
+    )
+    return {
+        "device_id": device_id,
+        "credential_id": passkey.credential_id,
+        "device_binding_hash": device_binding_hash,
+    }
+
+
+def authenticate_student_passkey(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    access_context: StudentAccessContext,
+    credential: dict,
+    device_token: str,
+    expected_challenge: str,
+    expected_rp_id: str,
+    expected_origin: str,
+) -> dict:
+    now = now_in_app_timezone(settings)
+    device = repo.get_registered_device_for_student(access_context.student_id)
+    if device is None:
+        raise ValueError("No registered device was found for this student.")
+    device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
+    if not hmac.compare_digest(
+        device_binding_hash,
+        str(device["device_binding_hash"]),
+    ):
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=access_context.course_id,
+            student_id=access_context.student_id,
+            schedule_id=access_context.schedule_id,
+            alert_type="passkey_from_unrecognized_device",
+            severity="high",
+            message="A passkey attempt came from an unrecognized browser device.",
+            device_binding_hash=device_binding_hash,
+        )
+        raise ValueError("This is not the registered browser for this student.")
+
+    passkey = complete_authentication(
+        credential=credential,
+        expected_challenge=expected_challenge,
+        expected_rp_id=expected_rp_id,
+        expected_origin=expected_origin,
+        credential_id=str(device["credential_id"]),
+        public_key=str(device["public_key"]),
+        sign_count=int(device["sign_count"]),
+    )
+    repo.update_registered_device_usage(
+        device_id=int(device["id"]),
+        sign_count=passkey.sign_count,
+        last_used_at=now.isoformat(),
+    )
+    return {
+        "device_id": int(device["id"]),
+        "credential_id": passkey.credential_id,
+        "device_binding_hash": device_binding_hash,
+    }
 
 
 def verify_login_code(
@@ -323,6 +538,7 @@ def stamp_attendance(
     course,
     student,
     geolocation_payload: dict,
+    verified_device: dict | None = None,
 ) -> AttendanceStampResult:
     now = now_in_app_timezone(settings)
     if not _course_is_active_today(course, now):
@@ -342,14 +558,47 @@ def stamp_attendance(
     if "error" in geolocation_payload:
         return AttendanceStampResult(success=False, message=str(geolocation_payload["error"]))
 
-    latitude = float(geolocation_payload["latitude"])
-    longitude = float(geolocation_payload["longitude"])
-    accuracy_m = (
-        float(geolocation_payload["accuracy_m"])
-        if geolocation_payload.get("accuracy_m") is not None
-        else None
-    )
+    try:
+        latitude, longitude, accuracy_m, device_binding_hash = _validate_location_payload(
+            geolocation_payload,
+            settings,
+            now,
+        )
+    except ValueError as error:
+        return AttendanceStampResult(success=False, message=str(error))
     attendance_date = now.date().isoformat()
+
+    registered_device = repo.get_registered_device_for_student(int(student["id"]))
+    if registered_device is None or verified_device is None:
+        return AttendanceStampResult(
+            success=False,
+            message="Verify your registered passkey before submitting attendance.",
+        )
+    verified_binding_hash = str(verified_device.get("device_binding_hash", ""))
+    if (
+        int(verified_device.get("device_id", 0)) != int(registered_device["id"])
+        or not hmac.compare_digest(
+            verified_binding_hash,
+            str(registered_device["device_binding_hash"]),
+        )
+        or not hmac.compare_digest(verified_binding_hash, device_binding_hash)
+    ):
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            schedule_id=int(active_schedule["id"]),
+            alert_type="device_changed_before_stamp",
+            severity="high",
+            message="The attendance device did not match the verified passkey session.",
+            device_binding_hash=device_binding_hash,
+            geolocation_payload=geolocation_payload,
+        )
+        return AttendanceStampResult(
+            success=False,
+            message="Attendance must be submitted from the verified device.",
+        )
 
     if repo.attendance_exists(
         course_id=int(course["id"]),
@@ -360,6 +609,33 @@ def stamp_attendance(
         return AttendanceStampResult(
             success=False,
             message="Attendance has already been stamped for this schedule window.",
+        )
+
+    existing_device_stamp = repo.find_attendance_for_device_window(
+        course_id=int(course["id"]),
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=attendance_date,
+        device_binding_hash=device_binding_hash,
+    )
+    if (
+        existing_device_stamp is not None
+        and int(existing_device_stamp["student_id"]) != int(student["id"])
+    ):
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            schedule_id=int(active_schedule["id"]),
+            alert_type="multiple_students_same_device",
+            severity="critical",
+            message="One device attempted attendance for multiple students in the same lecture.",
+            device_binding_hash=device_binding_hash,
+            geolocation_payload=geolocation_payload,
+        )
+        return AttendanceStampResult(
+            success=False,
+            message="This device has already been used for another student in this lecture.",
         )
 
     distance_m = haversine_distance_m(
@@ -378,18 +654,56 @@ def stamp_attendance(
             distance_m=distance_m,
         )
 
-    repo.record_attendance(
-        course_id=int(course["id"]),
-        student_id=int(student["id"]),
-        schedule_id=int(active_schedule["id"]),
-        attendance_date=attendance_date,
-        stamped_at=now.isoformat(),
-        student_latitude=latitude,
-        student_longitude=longitude,
-        accuracy_m=accuracy_m,
-        distance_m=distance_m,
-        device_info=json.dumps(_sanitize_device_info(geolocation_payload)),
-    )
+    try:
+        repo.record_attendance(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            schedule_id=int(active_schedule["id"]),
+            attendance_date=attendance_date,
+            stamped_at=now.isoformat(),
+            student_latitude=latitude,
+            student_longitude=longitude,
+            accuracy_m=accuracy_m,
+            distance_m=distance_m,
+            device_info=json.dumps(_sanitize_device_info(geolocation_payload)),
+            registered_device_id=int(registered_device["id"]),
+            device_binding_hash=device_binding_hash,
+        )
+    except Exception:
+        if repo.attendance_exists(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            schedule_id=int(active_schedule["id"]),
+            attendance_date=attendance_date,
+        ):
+            return AttendanceStampResult(
+                success=False,
+                message="Attendance has already been stamped for this schedule window.",
+            )
+        concurrent_device_stamp = repo.find_attendance_for_device_window(
+            course_id=int(course["id"]),
+            schedule_id=int(active_schedule["id"]),
+            attendance_date=attendance_date,
+            device_binding_hash=device_binding_hash,
+        )
+        if concurrent_device_stamp is not None:
+            _record_proxy_alert(
+                repo,
+                now=now,
+                course_id=int(course["id"]),
+                student_id=int(student["id"]),
+                schedule_id=int(active_schedule["id"]),
+                alert_type="multiple_students_same_device",
+                severity="critical",
+                message="A concurrent proxy attendance attempt was blocked.",
+                device_binding_hash=device_binding_hash,
+                geolocation_payload=geolocation_payload,
+            )
+            return AttendanceStampResult(
+                success=False,
+                message="This device has already been used in this lecture.",
+            )
+        raise
     accuracy_suffix = f" Reported GPS accuracy: {accuracy_m:.2f} m." if accuracy_m else ""
     return AttendanceStampResult(
         success=True,
@@ -546,6 +860,83 @@ def _sanitize_device_info(geolocation_payload: dict) -> dict:
     return {key: geolocation_payload.get(key) for key in keys}
 
 
+def _validate_location_payload(
+    geolocation_payload: dict,
+    settings: Settings,
+    now: datetime,
+) -> tuple[float, float, float, str]:
+    try:
+        latitude = float(geolocation_payload["latitude"])
+        longitude = float(geolocation_payload["longitude"])
+        accuracy_m = float(geolocation_payload["accuracy_m"])
+        captured_at_raw = str(geolocation_payload["captured_at"])
+        device_token = str(geolocation_payload["device_token"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Location verification data is incomplete. Capture location again.") from error
+
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        raise ValueError("The device returned invalid location coordinates.")
+    if accuracy_m <= 0 or accuracy_m > settings.location_max_accuracy_m:
+        raise ValueError(
+            f"Location accuracy must be within {settings.location_max_accuracy_m:.0f} m. "
+            "Move near a window and capture again."
+        )
+
+    try:
+        captured_at = datetime.fromisoformat(captured_at_raw.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("The location timestamp is invalid. Capture location again.") from error
+    if captured_at.tzinfo is None:
+        raise ValueError("The location timestamp must include a timezone.")
+    age_seconds = (now.astimezone(timezone.utc) - captured_at.astimezone(timezone.utc)).total_seconds()
+    if age_seconds < -30 or age_seconds > settings.location_max_age_seconds:
+        raise ValueError("Location expired. Capture a fresh classroom location.")
+
+    return (
+        latitude,
+        longitude,
+        accuracy_m,
+        hash_device_token(device_token, settings.otp_pepper),
+    )
+
+
+def _record_proxy_alert(
+    repo: AttendanceRepository,
+    *,
+    now: datetime,
+    course_id: int | None,
+    student_id: int | None,
+    schedule_id: int | None,
+    alert_type: str,
+    severity: str,
+    message: str,
+    device_binding_hash: str | None,
+    geolocation_payload: dict | None = None,
+) -> None:
+    payload = geolocation_payload or {}
+    repo.create_proxy_alert(
+        course_id=course_id,
+        student_id=student_id,
+        schedule_id=schedule_id,
+        attendance_date=now.date().isoformat(),
+        alert_type=alert_type,
+        severity=severity,
+        message=message,
+        device_binding_hash=device_binding_hash,
+        latitude=_optional_float(payload.get("latitude")),
+        longitude=_optional_float(payload.get("longitude")),
+        accuracy_m=_optional_float(payload.get("accuracy_m")),
+        created_at=now.isoformat(),
+    )
+
+
+def _optional_float(value) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _course_is_active_today(course, now: datetime) -> bool:
     start_date = parse_iso_date(course["start_date"])
     end_date = parse_iso_date(course["end_date"] or course["start_date"])
@@ -558,6 +949,8 @@ def _issue_login_code(
     *,
     course,
     student,
+    device_binding_hash: str | None = None,
+    credential_id: str | None = None,
 ) -> OTPRequestResult:
     configuration_error = otp_delivery_configuration_error(settings)
     if configuration_error:
@@ -583,6 +976,8 @@ def _issue_login_code(
         delivery_target=_delivery_target(student, settings.otp_delivery_mode),
         expires_at=expires_at.isoformat(),
         created_at=issued_at.isoformat(),
+        device_binding_hash=device_binding_hash,
+        credential_id=credential_id,
     )
 
     try:

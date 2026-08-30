@@ -82,6 +82,16 @@
         setFrameHeight(document.body.scrollHeight);
       }
 
+      function deviceToken() {
+        const key = "classpresence.device.v1";
+        let value = localStorage.getItem(key);
+        if (!value) {
+          value = crypto.randomUUID();
+          localStorage.setItem(key, value);
+        }
+        return value;
+      }
+
       window.addEventListener("message", (event) => {
         if (event.data.type !== "streamlit:render") {
           return;
@@ -118,6 +128,7 @@
               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
               screen_width: window.screen.width,
               screen_height: window.screen.height,
+              device_token: deviceToken(),
             };
             setStatus("Location captured. The app will validate the attendance stamp now.");
             setComponentValue(payload);

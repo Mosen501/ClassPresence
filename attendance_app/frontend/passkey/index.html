@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Passkey Verification</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+        background: transparent;
+        color: #f4f7fb;
+      }
+      .panel {
+        border: 1px solid #253140;
+        border-radius: 14px;
+        background: #0f141c;
+        padding: 14px;
+      }
+      button {
+        width: 100%;
+        border: none;
+        border-radius: 10px;
+        background: #c7f36b;
+        color: #121807;
+        padding: 12px 14px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:hover { background: #d4ff7b; }
+      button:disabled { opacity: 0.7; cursor: wait; }
+      p { margin: 10px 0 0; font-size: 13px; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <button id="passkeyButton" type="button">Verify this device</button>
+      <p id="statusText">Your passkey confirms this registered device.</p>
+    </div>
+    <script>
+      const button = document.getElementById("passkeyButton");
+      const statusText = document.getElementById("statusText");
+      let componentArgs = null;
+
+      function send(type, data) {
+        window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), "*");
+      }
+
+      function setValue(value) {
+        send("streamlit:setComponentValue", { value });
+      }
+
+      function setHeight() {
+        send("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+      }
+
+      function base64url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let value = "";
+        bytes.forEach((byte) => { value += String.fromCharCode(byte); });
+        return btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      }
+
+      function decode(value) {
+        const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+        const binary = atob(padded);
+        return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      }
+
+      function deviceToken() {
+        const key = "classpresence.device.v1";
+        let value = localStorage.getItem(key);
+        if (!value) {
+          value = crypto.randomUUID();
+          localStorage.setItem(key, value);
+        }
+        return value;
+      }
+
+      function prepareOptions(options, action) {
+        options.challenge = decode(options.challenge);
+        if (action === "register") {
+          options.user.id = decode(options.user.id);
+          (options.excludeCredentials || []).forEach((item) => { item.id = decode(item.id); });
+        } else {
+          (options.allowCredentials || []).forEach((item) => { item.id = decode(item.id); });
+        }
+        return options;
+      }
+
+      function registrationCredential(credential) {
+        return {
+          id: credential.id,
+          rawId: base64url(credential.rawId),
+          type: credential.type,
+          authenticatorAttachment: credential.authenticatorAttachment,
+          clientExtensionResults: credential.getClientExtensionResults(),
+          response: {
+            attestationObject: base64url(credential.response.attestationObject),
+            clientDataJSON: base64url(credential.response.clientDataJSON),
+            transports: credential.response.getTransports ? credential.response.getTransports() : [],
+          },
+        };
+      }
+
+      function authenticationCredential(credential) {
+        return {
+          id: credential.id,
+          rawId: base64url(credential.rawId),
+          type: credential.type,
+          authenticatorAttachment: credential.authenticatorAttachment,
+          clientExtensionResults: credential.getClientExtensionResults(),
+          response: {
+            authenticatorData: base64url(credential.response.authenticatorData),
+            clientDataJSON: base64url(credential.response.clientDataJSON),
+            signature: base64url(credential.response.signature),
+            userHandle: credential.response.userHandle
+              ? base64url(credential.response.userHandle)
+              : null,
+          },
+        };
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.data.type !== "streamlit:render") return;
+        componentArgs = event.data.args;
+        button.textContent = componentArgs.action === "register"
+          ? "Register this device"
+          : "Verify this device";
+        setHeight();
+      });
+
+      button.addEventListener("click", async () => {
+        if (!componentArgs || !window.PublicKeyCredential || !navigator.credentials) {
+          setValue({
+            operation_id: componentArgs?.operationId,
+            error: "Passkeys are not supported by this browser.",
+          });
+          return;
+        }
+        button.disabled = true;
+        statusText.textContent = "Waiting for device confirmation...";
+        setHeight();
+        try {
+          const action = componentArgs.action;
+          const options = prepareOptions(JSON.parse(componentArgs.optionsJson), action);
+          const credential = action === "register"
+            ? await navigator.credentials.create({ publicKey: options })
+            : await navigator.credentials.get({ publicKey: options });
+          const serialized = action === "register"
+            ? registrationCredential(credential)
+            : authenticationCredential(credential);
+          setValue({
+            operation_id: componentArgs.operationId,
+            action,
+            credential: serialized,
+            device_token: deviceToken(),
+            origin: window.location.origin,
+            hostname: window.location.hostname,
+          });
+          statusText.textContent = "Device verified.";
+        } catch (error) {
+          setValue({
+            operation_id: componentArgs.operationId,
+            action: componentArgs.action,
+            device_token: deviceToken(),
+            error: error.message || "Device verification failed.",
+          });
+          statusText.textContent = "Device verification was not completed.";
+        } finally {
+          button.disabled = false;
+          setHeight();
+        }
+      });
+
+      send("streamlit:componentReady", { apiVersion: 1 });
+      setHeight();
+    </script>
+  </body>
+</html>
