@@ -20,6 +20,15 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+AUTOMATIC_BROWSER_FALLBACK_ERRORS = frozenset(
+    {
+        "ConstraintError",
+        "NotAllowedError",
+        "NotSupportedError",
+        "UnknownError",
+    }
+)
+
 
 @dataclass(frozen=True)
 class RegisteredPasskey:
@@ -47,6 +56,10 @@ def hash_device_token(token: str, pepper: str) -> str:
         normalized.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+
+
+def passkey_failure_allows_browser_fallback(error_name: str | None) -> bool:
+    return str(error_name or "").strip() in AUTOMATIC_BROWSER_FALLBACK_ERRORS
 
 
 def build_registration_options(

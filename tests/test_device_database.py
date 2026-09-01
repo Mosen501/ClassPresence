@@ -129,6 +129,10 @@ class DeviceDatabaseTestCase(unittest.TestCase):
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
                 ("pending_browser_enrollments",),
             ).fetchone()
+            pending_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(pending_browser_enrollments)")
+            }
 
         self.assertIn("schedule_id", otp_columns)
         self.assertIn("attendance_date", otp_columns)
@@ -136,6 +140,7 @@ class DeviceDatabaseTestCase(unittest.TestCase):
         self.assertIsNotNone(audit_index)
         self.assertIn("auth_method", device_columns)
         self.assertIsNotNone(pending_table)
+        self.assertIn("fallback_reason", pending_columns)
 
 
 if __name__ == "__main__":

@@ -345,11 +345,16 @@ class ServicesTestCase(unittest.TestCase):
                 credential_id=credential_id,
                 public_key=public_key,
                 device_token=device_token,
+                fallback_reason="NotAllowedError: iCloud Keychain is unavailable",
             )
 
         self.assertIsNone(self.repo.get_registered_device_for_student(int(student["id"])))
         pending = self.repo.list_pending_browser_enrollments(course_id=int(course["id"]))
         self.assertEqual([int(row["id"]) for row in pending], [pending_id])
+        self.assertEqual(
+            pending[0]["fallback_reason"],
+            "NotAllowedError: iCloud Keychain is unavailable",
+        )
 
         device_id = self.repo.approve_pending_browser_enrollment(
             pending_id=pending_id,

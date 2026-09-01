@@ -14,7 +14,11 @@ from attendance_app.browser_keys import build_browser_key_options
 from attendance_app.components import geo_capture, location_picker, passkey_action
 from attendance_app.config import load_settings
 from attendance_app.database import AttendanceRepository
-from attendance_app.passkeys import build_authentication_options, build_registration_options
+from attendance_app.passkeys import (
+    build_authentication_options,
+    build_registration_options,
+    passkey_failure_allows_browser_fallback,
+)
 from attendance_app.report_importer import import_attendance_report_bytes
 from attendance_app.reports import build_course_report_xlsx
 from attendance_app.roster import parse_roster_file
@@ -1646,6 +1650,15 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
             }
             with st.form(f"pending_browser_enrollment_{course_id}", border=True):
                 selected_pending = st.selectbox("Pending request", list(pending_labels))
+                selected_pending_id = pending_labels[selected_pending]
+                selected_request = next(
+                    row for row in pending_enrollments if int(row["id"]) == selected_pending_id
+                )
+                st.caption(
+                    f"{selected_request.get('schedule_label') or 'Lecture'} · "
+                    f"{selected_request['attendance_date']} · Automatic fallback: "
+                    f"{selected_request.get('fallback_reason') or 'Passkey unavailable'}"
+                )
                 identity_verified = st.checkbox(
                     "I verified this student's identity in person",
                 )
@@ -1667,7 +1680,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                 else:
                     try:
                         repo.approve_pending_browser_enrollment(
-                            pending_id=pending_labels[selected_pending],
+                            pending_id=selected_pending_id,
                             actor_identifier=actor_identifier,
                             reviewed_at=now_in_app_timezone(settings).isoformat(),
                         )
@@ -1678,7 +1691,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                         st.error(str(error))
             if reject_pending:
                 if repo.reject_pending_browser_enrollment(
-                    pending_id=pending_labels[selected_pending],
+                    pending_id=selected_pending_id,
                     actor_identifier=actor_identifier,
                     reviewed_at=now_in_app_timezone(settings).isoformat(),
                 ):
@@ -2639,7 +2652,7 @@ def _handle_student_access_location(payload, repo, settings, university_id: str)
         st.session_state["student_browser_key_processed"] = None
         st.session_state["student_browser_key_error"] = None
         st.session_state["student_pending_enrollment_id"] = None
-        st.session_state["student_registration_method"] = None
+        st.session_state["student_passkey_fallback_reason"] = None
         st.session_state["student_credential_capability"] = None
         st.session_state["student_credential_capability_operation"] = None
         st.rerun(scope="fragment")
@@ -2775,36 +2788,36 @@ def _render_student_device_registration_step(repo, settings, context: dict) -> N
             return
 
     capability = st.session_state.get("student_credential_capability") or {}
-    default_method = "passkey" if capability.get("passkey_supported", True) else "browser_key"
-    method = st.session_state.get("student_registration_method") or default_method
-    st.session_state["student_registration_method"] = method
+    fallback_reason = st.session_state.get("student_passkey_fallback_reason")
+    if (
+        fallback_reason is None
+        and "passkey_supported" in capability
+        and not capability["passkey_supported"]
+    ):
+        fallback_reason = "NotSupportedError: Passkeys are unavailable in this browser."
+        st.session_state["student_passkey_fallback_reason"] = fallback_reason
 
-    if method == "browser_key":
+    if fallback_reason is not None:
         st.warning(
-            "سيُسجل هذا المتصفح بدلاً من مفتاح المرور. يجب أن يتحقق المسؤول من هويتك "
-            "ويوافق على الطلب، وسيؤدي حذف بيانات المتصفح إلى الحاجة لإعادة التعيين."
+            "تعذر استخدام مفتاح المرور، لذلك يجري إعداد التسجيل الآمن لهذا المتصفح تلقائياً. "
+            "يجب أن يتحقق المسؤول من هويتك حضورياً ويوافق على الطلب."
         )
         _render_student_browser_key_step(repo, settings, context, action="register")
-        if st.button("المحاولة باستخدام مفتاح المرور", width="stretch"):
-            st.session_state["student_registration_method"] = "passkey"
-            st.session_state["student_browser_key_operation"] = None
-            st.rerun(scope="fragment")
         return
 
     _render_student_passkey_step(repo, settings, context, action="register")
-    if capability.get("browser_key_supported", True) and st.button(
-        "لا يمكنني استخدام مفتاح المرور — طلب تسجيل المتصفح",
-        width="stretch",
-    ):
-        st.session_state["student_registration_method"] = "browser_key"
-        st.session_state["student_passkey_operation"] = None
-        st.rerun(scope="fragment")
 
 
 def _render_student_browser_key_step(repo, settings, context: dict, *, action: str) -> None:
     error = st.session_state.pop("student_browser_key_error", None)
     if error:
         st.error(_student_message(error))
+        if action == "register":
+            if st.button("إعادة محاولة تسجيل الجهاز", type="primary", width="stretch"):
+                st.session_state["student_browser_key_operation"] = None
+                st.session_state["student_browser_key_processed"] = None
+                st.rerun(scope="fragment")
+            return
     title = "التحقق من المتصفح المسجل" if action == "authenticate" else "تسجيل هذا المتصفح"
     status = "مفتاح المتصفح مطلوب" if action == "authenticate" else "يتطلب موافقة المسؤول"
     _render_section_title(title, status)
@@ -2813,7 +2826,9 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
     except Exception as error:
         st.error(_student_message(error))
         return
-    component_action = "browser_authenticate" if action == "authenticate" else "browser_register"
+    component_action = (
+        "browser_authenticate" if action == "authenticate" else "browser_register_auto"
+    )
     payload = passkey_action(
         action=component_action,
         options_json=operation["options_json"],
@@ -2851,6 +2866,9 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
             credential_id=str(payload["credential_id"]),
             public_key=str(payload["public_key"]),
             device_token=str(payload["device_token"]),
+            fallback_reason=str(
+                st.session_state.get("student_passkey_fallback_reason") or "Passkey unavailable"
+            ),
         )
         st.session_state["student_pending_enrollment_id"] = pending_id
         st.session_state["student_browser_key_operation"] = None
@@ -2932,6 +2950,15 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
     st.session_state["student_passkey_processed"] = operation["id"]
 
     if payload.get("error"):
+        if action == "register" and passkey_failure_allows_browser_fallback(
+            payload.get("error_name")
+        ):
+            error_name = str(payload.get("error_name") or "PasskeyUnavailable")
+            st.session_state["student_passkey_fallback_reason"] = (
+                f"{error_name}: {payload['error']}"
+            )
+            st.session_state["student_passkey_operation"] = None
+            st.rerun(scope="fragment")
         st.session_state["student_passkey_error"] = str(payload["error"])
         st.session_state["student_passkey_operation"] = None
         st.rerun(scope="fragment")
@@ -3087,7 +3114,7 @@ def _reset_student_access(*, clear_id: bool) -> None:
     st.session_state["student_browser_key_processed"] = None
     st.session_state["student_browser_key_error"] = None
     st.session_state["student_pending_enrollment_id"] = None
-    st.session_state["student_registration_method"] = None
+    st.session_state["student_passkey_fallback_reason"] = None
     st.session_state["student_credential_capability"] = None
     st.session_state["student_credential_capability_operation"] = None
 
@@ -3177,7 +3204,7 @@ def _init_session_state() -> None:
         "student_browser_key_processed": None,
         "student_browser_key_error": None,
         "student_pending_enrollment_id": None,
-        "student_registration_method": None,
+        "student_passkey_fallback_reason": None,
         "student_credential_capability": None,
         "student_credential_capability_operation": None,
         "student_stamp_geolocation": None,

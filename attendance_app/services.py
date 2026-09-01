@@ -514,6 +514,7 @@ def request_student_browser_key_enrollment(
     credential_id: str,
     public_key: str,
     device_token: str,
+    fallback_reason: str = "Passkey unavailable",
 ) -> int:
     now = now_in_app_timezone(settings)
     _require_access_context_window(repo, settings, access_context, now=now)
@@ -547,6 +548,7 @@ def request_student_browser_key_enrollment(
         device_binding_hash=device_binding_hash,
         expires_at=access_context.session_expires_at,
         created_at=now.isoformat(),
+        fallback_reason=fallback_reason[:500],
     )
 
 

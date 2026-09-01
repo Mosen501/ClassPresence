@@ -7,6 +7,7 @@ from attendance_app.passkeys import (
     build_authentication_options,
     build_registration_options,
     hash_device_token,
+    passkey_failure_allows_browser_fallback,
 )
 
 
@@ -45,6 +46,18 @@ class PasskeyTestCase(unittest.TestCase):
         self.assertEqual(options["allowCredentials"][0]["id"], "Y3JlZGVudGlhbC1pZA")
         self.assertEqual(options["userVerification"], "required")
         self.assertEqual(options["challenge"], challenge)
+
+    def test_only_availability_failures_allow_automatic_browser_fallback(self) -> None:
+        for error_name in (
+            "ConstraintError",
+            "NotAllowedError",
+            "NotSupportedError",
+            "UnknownError",
+        ):
+            self.assertTrue(passkey_failure_allows_browser_fallback(error_name))
+
+        for error_name in ("AbortError", "DataError", "InvalidStateError", "SecurityError", None):
+            self.assertFalse(passkey_failure_allows_browser_fallback(error_name))
 
 
 if __name__ == "__main__":

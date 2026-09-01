@@ -11,7 +11,7 @@ Students sign in with a one-time password tied to the email address on their cou
 - Bulk student import from `.xlsx` or `.csv` with `student id`, `student name`, and `email` columns
 - Roster-only enrollment workflow so students must exist on the uploaded course roster
 - Student portal with roster-linked one-time password login
-- Passkey enrollment and verification bound to the student's registered browser device
+- Automatic passkey-first enrollment bound to the student's registered browser device
 - Manager-approved browser-key fallback for devices without a usable passkey provider
 - Fresh passkey verification and OTP required for every lecture window
 - Student sessions and OTPs expire when the active lecture window ends
@@ -103,7 +103,8 @@ Copy `.env.example` values into your shell environment or deployment platform.
 - Passkeys require `localhost` or HTTPS. For production, set `WEBAUTHN_ORIGIN` and `WEBAUTHN_RP_ID` if the public URL cannot be inferred correctly.
 - A student enrolls one device after the first successful OTP. Returning check-ins require that device's passkey before a new OTP is issued.
 - Passkey registration accepts compatible built-in, external, and cross-device authenticators. The student portal checks capability before enrollment and preserves the browser's detailed WebAuthn error when setup is unavailable.
-- If no usable passkey provider is available, the student can request browser-key enrollment after OTP verification. A manager must verify the student in person and approve the request from Security before the browser becomes the student's one active registered device.
+- Device enrollment uses one action: it tries a passkey first and automatically prepares browser-key enrollment when the passkey provider is genuinely unavailable. A manager must verify the student in person and approve the fallback request from Security before the browser becomes the student's one active registered device.
+- WebAuthn security and relying-party configuration errors do not trigger fallback; they remain visible for administrator correction. The fallback reason is retained with the manager approval request.
 - Browser-key fallback credentials are non-exportable P-256 signing keys stored in that browser profile. Clearing site data, using private browsing, or changing browsers requires an audited manager reset.
 - If a student replaces or clears a registered browser, a manager can reset the device from the Security page, including during a live lecture. Every reset and subsequent enrollment remains in the device audit history.
 - Passkey proof and OTP authorization are valid only for the current lecture. A new lecture always requires a fresh passkey check and a newly issued OTP.

@@ -44,13 +44,18 @@
       let componentArgs = null;
       let locale = "en";
       let reportedCapabilityOperation = null;
+      let autoStartedOperation = null;
+      let runningOperation = null;
       const messages = {
         en: {
-          register: "Register with a passkey",
+          register: "Register this device",
           verify: "Verify this device",
           browserRegister: "Request browser registration",
           browserVerify: "Verify this registered browser",
-          description: "Your credential confirms this registered browser.",
+          registerDescription: "The app will select the best secure registration method available.",
+          verifyDescription: "Your credential confirms this registered browser.",
+          browserPreparing: "Passkey unavailable. Preparing secure browser registration...",
+          browserPrepared: "Secure browser registration prepared.",
           unsupported: "Passkeys are not supported by this browser.",
           browserUnsupported: "Secure browser-key storage is not supported.",
           checking: "Checking device compatibility...",
@@ -60,11 +65,14 @@
           incomplete: "Device verification was not completed.",
         },
         ar: {
-          register: "التسجيل باستخدام مفتاح المرور",
+          register: "تسجيل هذا الجهاز",
           verify: "التحقق من هذا الجهاز",
           browserRegister: "طلب تسجيل هذا المتصفح",
           browserVerify: "التحقق من المتصفح المسجل",
-          description: "تؤكد بيانات الاعتماد هوية المتصفح المسجل.",
+          registerDescription: "سيختار النظام تلقائياً أفضل طريقة تسجيل آمنة متاحة.",
+          verifyDescription: "تؤكد بيانات الاعتماد هوية المتصفح المسجل.",
+          browserPreparing: "مفتاح المرور غير متاح. جارٍ إعداد تسجيل المتصفح الآمن...",
+          browserPrepared: "تم إعداد تسجيل المتصفح الآمن.",
           unsupported: "هذا المتصفح لا يدعم مفتاح المرور.",
           browserUnsupported: "هذا المتصفح لا يدعم التخزين الآمن لمفتاح الجهاز.",
           checking: "جارٍ التحقق من توافق الجهاز...",
@@ -291,36 +299,54 @@
           button.style.display = "none";
           statusText.textContent = copy("checking");
           reportCapability();
+        } else if (componentArgs.action === "browser_register_auto") {
+          button.style.display = "none";
+          statusText.textContent = copy("browserPreparing");
+          if (autoStartedOperation !== componentArgs.operationId) {
+            autoStartedOperation = componentArgs.operationId;
+            setTimeout(() => { void performAction(); }, 0);
+          }
         } else {
           button.style.display = "block";
           button.textContent = copy(labels[componentArgs.action] || "verify");
-          statusText.textContent = copy("description");
+          statusText.textContent = copy(
+            componentArgs.action === "register" ? "registerDescription" : "verifyDescription",
+          );
         }
         setHeight();
       });
 
-      button.addEventListener("click", async () => {
+      async function performAction() {
         if (!componentArgs) return;
-        const action = componentArgs.action;
+        const args = componentArgs;
+        const action = args.action;
+        const operationId = args.operationId;
+        if (runningOperation === operationId) return;
         if (["register", "authenticate"].includes(action)
             && (!window.PublicKeyCredential || !navigator.credentials)) {
-          setValue({ operation_id: componentArgs.operationId, action, error: copy("unsupported") });
+          setValue({
+            operation_id: operationId,
+            action,
+            error_name: "NotSupportedError",
+            error: copy("unsupported"),
+          });
           return;
         }
-        if (["browser_register", "browser_authenticate"].includes(action)
+        if (["browser_register", "browser_register_auto", "browser_authenticate"].includes(action)
             && !browserKeySupported()) {
           setValue({
-            operation_id: componentArgs.operationId,
+            operation_id: operationId,
             action,
             error: copy("browserUnsupported"),
           });
           return;
         }
+        runningOperation = operationId;
         button.disabled = true;
         statusText.textContent = copy("waiting");
         setHeight();
         try {
-          const options = JSON.parse(componentArgs.optionsJson || "{}");
+          const options = JSON.parse(args.optionsJson || "{}");
           let result;
           if (action === "register" || action === "authenticate") {
             const prepared = prepareOptions(options, action);
@@ -332,22 +358,24 @@
                 ? registrationCredential(credential)
                 : authenticationCredential(credential),
             };
-          } else if (action === "browser_register") {
+          } else if (action === "browser_register" || action === "browser_register_auto") {
             result = await createBrowserCredential();
           } else if (action === "browser_authenticate") {
             result = await signWithBrowserCredential(options);
           }
           setValue(Object.assign({
-            operation_id: componentArgs.operationId,
+            operation_id: operationId,
             action,
             device_token: deviceToken(),
             origin: window.location.origin,
             hostname: window.location.hostname,
           }, result));
-          statusText.textContent = copy("verified");
+          statusText.textContent = action === "browser_register_auto"
+            ? copy("browserPrepared")
+            : copy("verified");
         } catch (error) {
           setValue({
-            operation_id: componentArgs.operationId,
+            operation_id: operationId,
             action,
             device_token: deviceToken(),
             error_name: error && error.name ? error.name : "Error",
@@ -355,10 +383,13 @@
           });
           statusText.textContent = copy("incomplete");
         } finally {
+          runningOperation = null;
           button.disabled = false;
           setHeight();
         }
-      });
+      }
+
+      button.addEventListener("click", performAction);
 
       send("streamlit:componentReady", { apiVersion: 1 });
       setHeight();

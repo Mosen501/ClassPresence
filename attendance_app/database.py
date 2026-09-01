@@ -109,6 +109,7 @@ _SQLITE_SCHEMA_STATEMENTS = (
         public_key TEXT NOT NULL,
         device_binding_hash TEXT NOT NULL,
         expires_at TEXT NOT NULL,
+        fallback_reason TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL,
         reviewed_at TEXT,
@@ -265,6 +266,7 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         public_key TEXT NOT NULL,
         device_binding_hash TEXT NOT NULL,
         expires_at TEXT NOT NULL,
+        fallback_reason TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL,
         reviewed_at TEXT,
@@ -837,6 +839,7 @@ class AttendanceRepository:
         device_binding_hash: str,
         expires_at: str,
         created_at: str,
+        fallback_reason: str = "",
     ) -> int:
         with self._connection() as connection:
             connection.execute(
@@ -854,9 +857,9 @@ class AttendanceRepository:
                 INSERT INTO pending_browser_enrollments (
                     student_id, course_id, schedule_id, attendance_date,
                     credential_id, public_key, device_binding_hash, expires_at,
-                    status, created_at
+                    fallback_reason, status, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """
             if self.backend == "postgres":
                 query += " RETURNING id"
@@ -871,6 +874,7 @@ class AttendanceRepository:
                     public_key,
                     device_binding_hash,
                     expires_at,
+                    fallback_reason,
                     created_at,
                 ),
             )
@@ -1497,6 +1501,12 @@ class AttendanceRepository:
                     "ALTER TABLE registered_devices ADD COLUMN auth_method TEXT "
                     "NOT NULL DEFAULT 'passkey'"
                 )
+            pending_columns = self._postgres_columns(connection, "pending_browser_enrollments")
+            if "fallback_reason" not in pending_columns:
+                connection.execute(
+                    "ALTER TABLE pending_browser_enrollments ADD COLUMN fallback_reason TEXT "
+                    "NOT NULL DEFAULT ''"
+                )
             attendance_columns = self._postgres_columns(connection, "attendance_records")
             if "registered_device_id" not in attendance_columns:
                 connection.execute(
@@ -1529,6 +1539,12 @@ class AttendanceRepository:
             connection.execute(
                 "ALTER TABLE registered_devices ADD COLUMN auth_method TEXT "
                 "NOT NULL DEFAULT 'passkey'"
+            )
+        pending_columns = self._sqlite_columns(connection, "pending_browser_enrollments")
+        if "fallback_reason" not in pending_columns:
+            connection.execute(
+                "ALTER TABLE pending_browser_enrollments ADD COLUMN fallback_reason TEXT "
+                "NOT NULL DEFAULT ''"
             )
         attendance_columns = self._sqlite_columns(connection, "attendance_records")
         if "registered_device_id" not in attendance_columns:

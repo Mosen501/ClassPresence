@@ -16,12 +16,27 @@ from attendance_app.components import geo_capture, passkey_action
 from attendance_app.database import AttendanceRepository
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
+PASSKEY_COMPONENT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "attendance_app"
+    / "frontend"
+    / "passkey"
+    / "index.html"
+)
 
 
 class AppNavigationTestCase(unittest.TestCase):
     def test_student_components_keep_warm_deployment_compatible_signatures(self) -> None:
         self.assertNotIn("locale", signature(geo_capture).parameters)
         self.assertNotIn("locale", signature(passkey_action).parameters)
+
+    def test_device_registration_uses_one_passkey_first_action_with_automatic_fallback(self) -> None:
+        component_html = PASSKEY_COMPONENT_PATH.read_text()
+
+        self.assertIn('register: "Register this device"', component_html)
+        self.assertIn('componentArgs.action === "browser_register_auto"', component_html)
+        self.assertIn("void performAction()", component_html)
+        self.assertNotIn('register: "Register with a passkey"', component_html)
 
     def test_student_localization_keeps_internal_navigation_values(self) -> None:
         self.assertEqual(STUDENT_SECTIONS, ["Check in", "Status", "History"])
