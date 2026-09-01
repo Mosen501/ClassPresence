@@ -19,7 +19,7 @@ class PasskeyTestCase(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, different)
 
-    def test_registration_options_require_platform_user_verification(self) -> None:
+    def test_registration_options_allow_compatible_authenticators_with_verification(self) -> None:
         options_json, challenge = build_registration_options(
             rp_id="localhost",
             rp_name="ClassPresence",
@@ -30,7 +30,7 @@ class PasskeyTestCase(unittest.TestCase):
         options = json.loads(options_json)
 
         self.assertEqual(options["rp"]["id"], "localhost")
-        self.assertEqual(options["authenticatorSelection"]["authenticatorAttachment"], "platform")
+        self.assertNotIn("authenticatorAttachment", options["authenticatorSelection"])
         self.assertEqual(options["authenticatorSelection"]["userVerification"], "required")
         self.assertEqual(options["challenge"], challenge)
 

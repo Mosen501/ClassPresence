@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 from html import escape
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from attendance_app.browser_keys import build_browser_key_options
 from attendance_app.components import geo_capture, location_picker, passkey_action
 from attendance_app.config import load_settings
 from attendance_app.database import AttendanceRepository
@@ -19,12 +21,14 @@ from attendance_app.roster import parse_roster_file
 from attendance_app.security import verify_password
 from attendance_app.services import (
     StudentAccessContext,
+    authenticate_student_browser_key,
     authenticate_student_passkey,
     build_student_attendance_summary,
     now_in_app_timezone,
     otp_delivery_configuration_error,
     register_student_passkey,
     request_login_code_for_access_context,
+    request_student_browser_key_enrollment,
     reset_student_device,
     resolve_active_student_session,
     resolve_student_access_context,
@@ -733,6 +737,14 @@ STUDENT_MESSAGE_TRANSLATIONS = {
     "This student already has a registered device.": "يوجد جهاز مسجل لهذا الطالب بالفعل.",
     "No registered device was found for this student.": "لم يتم العثور على جهاز مسجل لهذا الطالب.",
     "This is not the registered browser for this student.": "هذا المتصفح غير مسجل لهذا الطالب.",
+    "This student uses registered-browser verification instead of a passkey.": "يستخدم هذا الطالب التحقق من المتصفح المسجل بدلاً من مفتاح المرور.",
+    "This student must verify using the registered passkey.": "يجب التحقق باستخدام مفتاح المرور المسجل.",
+    "The browser credential does not match the registered device.": "مفتاح المتصفح لا يطابق الجهاز المسجل.",
+    "The registered browser signature is invalid.": "تعذر التحقق من توقيع المتصفح المسجل.",
+    "The browser credential data is incomplete.": "بيانات مفتاح المتصفح غير مكتملة.",
+    "The browser credential data is invalid.": "بيانات مفتاح المتصفح غير صالحة.",
+    "The browser public key is invalid.": "مفتاح المتصفح العام غير صالح.",
+    "The browser credential identifier is invalid.": "معرف مفتاح المتصفح غير صالح.",
     "This browser could not provide a valid device identity.": "تعذر التحقق من هوية هذا الجهاز.",
     "The passkey does not match the registered device.": "مفتاح المرور لا يطابق الجهاز المسجل.",
     "Location verification data is incomplete. Capture location again.": "بيانات الموقع غير مكتملة. أعد تحديد الموقع.",
@@ -1436,6 +1448,9 @@ def _render_manager_students(repo: AttendanceRepository, settings, course) -> No
                         "Email": row["email"] or "—",
                         "Phone": row["phone"] or "—",
                         "Device": "Registered" if row.get("registered_device_id") else "Not registered",
+                        "Method": str(row.get("device_auth_method") or "—")
+                        .replace("_", " ")
+                        .title(),
                     }
                     for row in students
                 ],
@@ -1558,6 +1573,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
         course_id,
         1000,
     )
+    pending_enrollments = repo.list_pending_browser_enrollments(course_id=course_id)
     students = _cached_list_students(settings.database_target, course_id)
     open_alerts = [row for row in alerts if not row.get("resolved_at")]
     protected_students = sum(bool(row.get("registered_device_id")) for row in students)
@@ -1570,6 +1586,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                 "blocked proxy attempts",
             ),
             ("Protected", protected_students, f"of {len(students)} students"),
+            ("Pending", len(pending_enrollments), "browser approvals"),
             ("Device events", len(audit_events), "permanent audit"),
         ]
     )
@@ -1620,6 +1637,56 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                 st.rerun(scope="fragment")
         else:
             st.info("No open incidents.")
+
+        _render_section_title("Browser enrollment", "Physical identity check")
+        if pending_enrollments:
+            pending_labels = {
+                f"#{row['id']} · {row['university_id']} · {row['full_name']}": int(row["id"])
+                for row in pending_enrollments
+            }
+            with st.form(f"pending_browser_enrollment_{course_id}", border=True):
+                selected_pending = st.selectbox("Pending request", list(pending_labels))
+                identity_verified = st.checkbox(
+                    "I verified this student's identity in person",
+                )
+                approve_pending = st.form_submit_button(
+                    "Approve browser",
+                    type="primary",
+                    width="stretch",
+                )
+                reject_pending = st.form_submit_button(
+                    "Reject request",
+                    width="stretch",
+                )
+            actor_identifier = str(
+                (st.session_state.get("manager_auth") or {}).get("username", "manager")
+            )
+            if approve_pending:
+                if not identity_verified:
+                    st.error("Confirm that you verified the student in person before approval.")
+                else:
+                    try:
+                        repo.approve_pending_browser_enrollment(
+                            pending_id=pending_labels[selected_pending],
+                            actor_identifier=actor_identifier,
+                            reviewed_at=now_in_app_timezone(settings).isoformat(),
+                        )
+                        _invalidate_read_caches()
+                        st.session_state["manager_notice"] = "Registered browser approved."
+                        st.rerun()
+                    except Exception as error:
+                        st.error(str(error))
+            if reject_pending:
+                if repo.reject_pending_browser_enrollment(
+                    pending_id=pending_labels[selected_pending],
+                    actor_identifier=actor_identifier,
+                    reviewed_at=now_in_app_timezone(settings).isoformat(),
+                ):
+                    _invalidate_read_caches()
+                    st.session_state["manager_notice"] = "Browser enrollment rejected."
+                    st.rerun()
+        else:
+            st.info("No browser enrollment requests are waiting for approval.")
 
         protected = [row for row in students if row.get("registered_device_id")]
         _render_section_title("Registered device", "Reset access")
@@ -1821,16 +1888,17 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
                 access_context["device_enrolled"]
                 and st.session_state.get("student_passkey_verified") is None
             ):
-                _render_student_passkey_step(
+                _render_student_device_verification_step(
                     repo,
                     settings,
                     access_context,
-                    action="authenticate",
                 )
                 if st.button("استخدام رقم جامعي آخر", key="reset_student_access", width="stretch"):
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
             elif not st.session_state.get("student_otp_requested", False):
+                if not access_context["device_enrolled"]:
+                    _render_student_credential_capability(access_context)
                 if st.button("إرسال رمز التحقق", key="request_student_otp", type="primary", width="stretch"):
                     _request_student_otp(repo, settings, access_context)
                 if st.button("استخدام رقم جامعي آخر", key="reset_student_access", width="stretch"):
@@ -1852,12 +1920,7 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
             else:
-                _render_student_passkey_step(
-                    repo,
-                    settings,
-                    access_context,
-                    action="register",
-                )
+                _render_student_device_registration_step(repo, settings, access_context)
                 if st.button("البدء من جديد", key="student_registration_restart", width="stretch"):
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
@@ -2572,6 +2635,13 @@ def _handle_student_access_location(payload, repo, settings, university_id: str)
         st.session_state["student_passkey_operation"] = None
         st.session_state["student_passkey_processed"] = None
         st.session_state["student_passkey_error"] = None
+        st.session_state["student_browser_key_operation"] = None
+        st.session_state["student_browser_key_processed"] = None
+        st.session_state["student_browser_key_error"] = None
+        st.session_state["student_pending_enrollment_id"] = None
+        st.session_state["student_registration_method"] = None
+        st.session_state["student_credential_capability"] = None
+        st.session_state["student_credential_capability_operation"] = None
         st.rerun(scope="fragment")
     except Exception as error:
         st.error(_student_message(error))
@@ -2616,9 +2686,223 @@ def _verify_student_otp(repo, settings, context: dict, code: str) -> None:
             st.rerun()
         st.session_state["student_otp_verified"] = True
         st.session_state["student_passkey_operation"] = None
+        st.session_state["student_browser_key_operation"] = None
         st.rerun(scope="fragment")
     except Exception as error:
         st.error(_student_message(error))
+
+
+def _render_student_credential_capability(context: dict) -> None:
+    signature = (
+        int(context["student_id"]),
+        str(context["device_binding_hash"]),
+    )
+    capability = st.session_state.get("student_credential_capability")
+    if capability is not None and tuple(capability.get("signature", ())) == signature:
+        passkey_status = (
+            "متاح على هذا الجهاز"
+            if capability.get("platform_available")
+            else "قد يحتاج إعداداً أو جهاز مصادقة خارجي"
+        )
+        fallback_status = (
+            "متاح بموافقة المسؤول"
+            if capability.get("browser_key_supported")
+            else "غير متاح في هذا المتصفح"
+        )
+        st.caption(f"مفتاح المرور: {passkey_status} · تسجيل المتصفح البديل: {fallback_status}")
+        return
+
+    operation = st.session_state.get("student_credential_capability_operation")
+    if operation is None or tuple(operation.get("signature", ())) != signature:
+        operation = {"id": uuid4().hex, "signature": signature}
+        st.session_state["student_credential_capability_operation"] = operation
+    payload = passkey_action(
+        action="capability",
+        options_json="{}",
+        operation_id=operation["id"],
+        key=f"student_credential_capability_{operation['id']}",
+    )
+    if not payload or payload.get("operation_id") != operation["id"]:
+        return
+    st.session_state["student_credential_capability"] = {
+        "signature": signature,
+        "passkey_supported": bool(payload.get("passkey_supported")),
+        "platform_available": bool(payload.get("platform_available")),
+        "browser_key_supported": bool(payload.get("browser_key_supported")),
+    }
+    st.rerun(scope="fragment")
+
+
+def _render_student_device_verification_step(repo, settings, context: dict) -> None:
+    device = repo.get_registered_device_for_student(int(context["student_id"]))
+    if device is None:
+        st.error(_student_message("No registered device was found for this student."))
+        return
+    if str(device.get("auth_method") or "passkey") == "browser_key":
+        _render_student_browser_key_step(repo, settings, context, action="authenticate")
+        return
+    _render_student_passkey_step(repo, settings, context, action="authenticate")
+
+
+def _render_student_device_registration_step(repo, settings, context: dict) -> None:
+    pending_id = st.session_state.get("student_pending_enrollment_id")
+    if pending_id is not None:
+        pending = repo.get_pending_browser_enrollment(int(pending_id))
+        if pending is None:
+            st.session_state["student_pending_enrollment_id"] = None
+        elif str(pending["status"]) == "approved":
+            st.success("وافق المسؤول على تسجيل هذا المتصفح.")
+            if st.button("متابعة باستخدام المتصفح المسجل", type="primary", width="stretch"):
+                _reset_student_access(clear_id=False)
+                st.session_state["student_access_notice"] = (
+                    "تم تسجيل المتصفح. تحقق من الموقع مرة أخرى للمتابعة."
+                )
+                st.rerun(scope="fragment")
+            return
+        elif str(pending["status"]) == "pending":
+            _render_section_title("طلب تسجيل المتصفح", "بانتظار موافقة المسؤول")
+            st.info("تحقق المسؤول من هويتك حضورياً ثم يوافق على الطلب من صفحة الأمان.")
+            if st.button("التحقق من حالة الموافقة", width="stretch"):
+                st.rerun(scope="fragment")
+            return
+        else:
+            st.error("انتهى طلب تسجيل المتصفح أو تم رفضه.")
+            if st.button("إنشاء طلب جديد", width="stretch"):
+                st.session_state["student_pending_enrollment_id"] = None
+                st.session_state["student_browser_key_operation"] = None
+                st.session_state["student_browser_key_processed"] = None
+                st.rerun(scope="fragment")
+            return
+
+    capability = st.session_state.get("student_credential_capability") or {}
+    default_method = "passkey" if capability.get("passkey_supported", True) else "browser_key"
+    method = st.session_state.get("student_registration_method") or default_method
+    st.session_state["student_registration_method"] = method
+
+    if method == "browser_key":
+        st.warning(
+            "سيُسجل هذا المتصفح بدلاً من مفتاح المرور. يجب أن يتحقق المسؤول من هويتك "
+            "ويوافق على الطلب، وسيؤدي حذف بيانات المتصفح إلى الحاجة لإعادة التعيين."
+        )
+        _render_student_browser_key_step(repo, settings, context, action="register")
+        if st.button("المحاولة باستخدام مفتاح المرور", width="stretch"):
+            st.session_state["student_registration_method"] = "passkey"
+            st.session_state["student_browser_key_operation"] = None
+            st.rerun(scope="fragment")
+        return
+
+    _render_student_passkey_step(repo, settings, context, action="register")
+    if capability.get("browser_key_supported", True) and st.button(
+        "لا يمكنني استخدام مفتاح المرور — طلب تسجيل المتصفح",
+        width="stretch",
+    ):
+        st.session_state["student_registration_method"] = "browser_key"
+        st.session_state["student_passkey_operation"] = None
+        st.rerun(scope="fragment")
+
+
+def _render_student_browser_key_step(repo, settings, context: dict, *, action: str) -> None:
+    error = st.session_state.pop("student_browser_key_error", None)
+    if error:
+        st.error(_student_message(error))
+    title = "التحقق من المتصفح المسجل" if action == "authenticate" else "تسجيل هذا المتصفح"
+    status = "مفتاح المتصفح مطلوب" if action == "authenticate" else "يتطلب موافقة المسؤول"
+    _render_section_title(title, status)
+    try:
+        operation = _ensure_browser_key_operation(repo, settings, context, action=action)
+    except Exception as error:
+        st.error(_student_message(error))
+        return
+    component_action = "browser_authenticate" if action == "authenticate" else "browser_register"
+    payload = passkey_action(
+        action=component_action,
+        options_json=operation["options_json"],
+        operation_id=operation["id"],
+        key=f"student_browser_key_{operation['id']}",
+    )
+    if not payload or payload.get("operation_id") != operation["id"]:
+        return
+    if st.session_state.get("student_browser_key_processed") == operation["id"]:
+        return
+    st.session_state["student_browser_key_processed"] = operation["id"]
+    if payload.get("error"):
+        st.session_state["student_browser_key_error"] = str(payload["error"])
+        st.session_state["student_browser_key_operation"] = None
+        st.rerun(scope="fragment")
+    try:
+        if action == "authenticate":
+            verified_device = authenticate_student_browser_key(
+                repo,
+                settings,
+                access_context=StudentAccessContext(**context),
+                credential_id=str(payload["credential_id"]),
+                signature=str(payload["signature"]),
+                message=operation["message"],
+                device_token=str(payload["device_token"]),
+            )
+            st.session_state["student_passkey_verified"] = verified_device
+            st.session_state["student_browser_key_operation"] = None
+            st.rerun(scope="fragment")
+
+        pending_id = request_student_browser_key_enrollment(
+            repo,
+            settings,
+            access_context=StudentAccessContext(**context),
+            credential_id=str(payload["credential_id"]),
+            public_key=str(payload["public_key"]),
+            device_token=str(payload["device_token"]),
+        )
+        st.session_state["student_pending_enrollment_id"] = pending_id
+        st.session_state["student_browser_key_operation"] = None
+        _invalidate_read_caches()
+        st.rerun(scope="fragment")
+    except Exception as error:
+        st.session_state["student_browser_key_error"] = str(error)
+        st.session_state["student_browser_key_operation"] = None
+        st.rerun(scope="fragment")
+
+
+def _ensure_browser_key_operation(repo, settings, context: dict, *, action: str) -> dict:
+    rp_id, _origin = _passkey_relying_party(settings)
+    signature = (
+        action,
+        int(context["student_id"]),
+        str(context["device_binding_hash"]),
+        int(context["schedule_id"]),
+        str(context["attendance_date"]),
+        rp_id,
+    )
+    existing = st.session_state.get("student_browser_key_operation")
+    if existing is not None and tuple(existing.get("signature", ())) == signature:
+        return existing
+    if action == "authenticate":
+        device = repo.get_registered_device_for_student(int(context["student_id"]))
+        if device is None:
+            raise ValueError("No registered device was found for this student.")
+        if str(device.get("auth_method") or "passkey") != "browser_key":
+            raise ValueError("This student must verify using the registered passkey.")
+        credential_id = str(device["credential_id"])
+        options_json, challenge = build_browser_key_options(
+            rp_id=rp_id,
+            student_id=int(context["student_id"]),
+            course_id=int(context["course_id"]),
+            schedule_id=int(context["schedule_id"]),
+            attendance_date=str(context["attendance_date"]),
+            credential_id=credential_id,
+        )
+        message = str(json.loads(options_json)["message"])
+    else:
+        options_json, challenge, message = "{}", "", ""
+    operation = {
+        "id": uuid4().hex,
+        "signature": signature,
+        "action": action,
+        "options_json": options_json,
+        "challenge": challenge,
+        "message": message,
+    }
+    st.session_state["student_browser_key_operation"] = operation
+    return operation
 
 
 def _render_student_passkey_step(repo, settings, context: dict, *, action: str) -> None:
@@ -2799,6 +3083,13 @@ def _reset_student_access(*, clear_id: bool) -> None:
     st.session_state["student_passkey_operation"] = None
     st.session_state["student_passkey_processed"] = None
     st.session_state["student_passkey_error"] = None
+    st.session_state["student_browser_key_operation"] = None
+    st.session_state["student_browser_key_processed"] = None
+    st.session_state["student_browser_key_error"] = None
+    st.session_state["student_pending_enrollment_id"] = None
+    st.session_state["student_registration_method"] = None
+    st.session_state["student_credential_capability"] = None
+    st.session_state["student_credential_capability_operation"] = None
 
 
 def _apply_pending_student_id_reset() -> None:
@@ -2882,6 +3173,13 @@ def _init_session_state() -> None:
         "student_passkey_operation": None,
         "student_passkey_processed": None,
         "student_passkey_error": None,
+        "student_browser_key_operation": None,
+        "student_browser_key_processed": None,
+        "student_browser_key_error": None,
+        "student_pending_enrollment_id": None,
+        "student_registration_method": None,
+        "student_credential_capability": None,
+        "student_credential_capability_operation": None,
         "student_stamp_geolocation": None,
         "student_stamp_processed": None,
         "student_stamp_result": None,

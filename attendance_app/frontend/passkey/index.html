@@ -43,22 +43,31 @@
       const statusText = document.getElementById("statusText");
       let componentArgs = null;
       let locale = "en";
+      let reportedCapabilityOperation = null;
       const messages = {
         en: {
-          register: "Register this device",
+          register: "Register with a passkey",
           verify: "Verify this device",
-          description: "Your passkey confirms this registered device.",
+          browserRegister: "Request browser registration",
+          browserVerify: "Verify this registered browser",
+          description: "Your credential confirms this registered browser.",
           unsupported: "Passkeys are not supported by this browser.",
+          browserUnsupported: "Secure browser-key storage is not supported.",
+          checking: "Checking device compatibility...",
           waiting: "Waiting for device confirmation...",
           verified: "Device verified.",
           failed: "Device verification failed.",
           incomplete: "Device verification was not completed.",
         },
         ar: {
-          register: "تسجيل هذا الجهاز",
+          register: "التسجيل باستخدام مفتاح المرور",
           verify: "التحقق من هذا الجهاز",
-          description: "يؤكد مفتاح المرور هوية الجهاز المسجل.",
+          browserRegister: "طلب تسجيل هذا المتصفح",
+          browserVerify: "التحقق من المتصفح المسجل",
+          description: "تؤكد بيانات الاعتماد هوية المتصفح المسجل.",
           unsupported: "هذا المتصفح لا يدعم مفتاح المرور.",
+          browserUnsupported: "هذا المتصفح لا يدعم التخزين الآمن لمفتاح الجهاز.",
+          checking: "جارٍ التحقق من توافق الجهاز...",
           waiting: "بانتظار تأكيد الجهاز...",
           verified: "تم التحقق من الجهاز.",
           failed: "تعذر التحقق من الجهاز.",
@@ -100,10 +109,97 @@
         const key = "classpresence.device.v1";
         let value = localStorage.getItem(key);
         if (!value) {
-          value = crypto.randomUUID();
+          value = typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : base64url(crypto.getRandomValues(new Uint8Array(32)));
           localStorage.setItem(key, value);
         }
         return value;
+      }
+
+      function browserKeySupported() {
+        return Boolean(window.crypto && window.crypto.subtle && window.indexedDB);
+      }
+
+      function openCredentialDatabase() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open("classpresence.credentials.v1", 1);
+          request.onupgradeneeded = () => {
+            if (!request.result.objectStoreNames.contains("keys")) {
+              request.result.createObjectStore("keys", { keyPath: "credentialId" });
+            }
+          };
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error || new Error(copy("browserUnsupported")));
+        });
+      }
+
+      async function storeBrowserKey(record) {
+        const database = await openCredentialDatabase();
+        await new Promise((resolve, reject) => {
+          const transaction = database.transaction("keys", "readwrite");
+          transaction.objectStore("keys").put(record);
+          transaction.oncomplete = resolve;
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error);
+        });
+        database.close();
+      }
+
+      async function loadBrowserKey(credentialId) {
+        const database = await openCredentialDatabase();
+        const record = await new Promise((resolve, reject) => {
+          const request = database.transaction("keys", "readonly")
+            .objectStore("keys").get(credentialId);
+          request.onsuccess = () => resolve(request.result || null);
+          request.onerror = () => reject(request.error);
+        });
+        database.close();
+        return record;
+      }
+
+      async function createBrowserCredential() {
+        if (!browserKeySupported()) throw new Error(copy("browserUnsupported"));
+        const generated = await crypto.subtle.generateKey(
+          { name: "ECDSA", namedCurve: "P-256" },
+          true,
+          ["sign", "verify"],
+        );
+        const publicKeyBytes = await crypto.subtle.exportKey("spki", generated.publicKey);
+        const privateKeyBytes = await crypto.subtle.exportKey("pkcs8", generated.privateKey);
+        const privateKey = await crypto.subtle.importKey(
+          "pkcs8",
+          privateKeyBytes,
+          { name: "ECDSA", namedCurve: "P-256" },
+          false,
+          ["sign"],
+        );
+        const credentialId = base64url(await crypto.subtle.digest("SHA-256", publicKeyBytes));
+        const publicKey = base64url(publicKeyBytes);
+        await storeBrowserKey({
+          credentialId,
+          privateKey,
+          publicKey,
+          createdAt: new Date().toISOString(),
+        });
+        return { credential_id: credentialId, public_key: publicKey };
+      }
+
+      async function signWithBrowserCredential(options) {
+        if (!browserKeySupported()) throw new Error(copy("browserUnsupported"));
+        const record = await loadBrowserKey(options.credentialId);
+        if (!record || !record.privateKey) {
+          throw new Error("The registered browser key is missing. Ask the manager to reset it.");
+        }
+        const signature = await crypto.subtle.sign(
+          { name: "ECDSA", hash: "SHA-256" },
+          record.privateKey,
+          decode(options.message),
+        );
+        return {
+          credential_id: record.credentialId,
+          signature: base64url(signature),
+        };
       }
 
       function prepareOptions(options, action) {
@@ -150,6 +246,34 @@
         };
       }
 
+      async function reportCapability() {
+        if (!componentArgs || reportedCapabilityOperation === componentArgs.operationId) return;
+        reportedCapabilityOperation = componentArgs.operationId;
+        const passkeySupported = Boolean(window.PublicKeyCredential && navigator.credentials);
+        let platformAvailable = false;
+        if (passkeySupported && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+          try {
+            platformAvailable = await PublicKeyCredential
+              .isUserVerifyingPlatformAuthenticatorAvailable();
+          } catch (_error) {
+            platformAvailable = false;
+          }
+        }
+        setValue({
+          operation_id: componentArgs.operationId,
+          action: "capability",
+          passkey_supported: passkeySupported,
+          platform_available: platformAvailable,
+          browser_key_supported: browserKeySupported(),
+        });
+      }
+
+      function detailedError(error) {
+        const name = error && error.name ? error.name : "Error";
+        const detail = error && error.message ? error.message : copy("failed");
+        return `${copy("failed")} ${name}: ${detail}`;
+      }
+
       window.addEventListener("message", (event) => {
         if (event.data.type !== "streamlit:render") return;
         componentArgs = event.data.args;
@@ -157,18 +281,38 @@
         document.documentElement.lang = locale;
         document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
         document.body.dir = document.documentElement.dir;
-        button.textContent = componentArgs.action === "register"
-          ? copy("register")
-          : copy("verify");
-        statusText.textContent = copy("description");
+        const labels = {
+          register: "register",
+          authenticate: "verify",
+          browser_register: "browserRegister",
+          browser_authenticate: "browserVerify",
+        };
+        if (componentArgs.action === "capability") {
+          button.style.display = "none";
+          statusText.textContent = copy("checking");
+          reportCapability();
+        } else {
+          button.style.display = "block";
+          button.textContent = copy(labels[componentArgs.action] || "verify");
+          statusText.textContent = copy("description");
+        }
         setHeight();
       });
 
       button.addEventListener("click", async () => {
-        if (!componentArgs || !window.PublicKeyCredential || !navigator.credentials) {
+        if (!componentArgs) return;
+        const action = componentArgs.action;
+        if (["register", "authenticate"].includes(action)
+            && (!window.PublicKeyCredential || !navigator.credentials)) {
+          setValue({ operation_id: componentArgs.operationId, action, error: copy("unsupported") });
+          return;
+        }
+        if (["browser_register", "browser_authenticate"].includes(action)
+            && !browserKeySupported()) {
           setValue({
-            operation_id: componentArgs?.operationId,
-            error: copy("unsupported"),
+            operation_id: componentArgs.operationId,
+            action,
+            error: copy("browserUnsupported"),
           });
           return;
         }
@@ -176,29 +320,38 @@
         statusText.textContent = copy("waiting");
         setHeight();
         try {
-          const action = componentArgs.action;
-          const options = prepareOptions(JSON.parse(componentArgs.optionsJson), action);
-          const credential = action === "register"
-            ? await navigator.credentials.create({ publicKey: options })
-            : await navigator.credentials.get({ publicKey: options });
-          const serialized = action === "register"
-            ? registrationCredential(credential)
-            : authenticationCredential(credential);
-          setValue({
+          const options = JSON.parse(componentArgs.optionsJson || "{}");
+          let result;
+          if (action === "register" || action === "authenticate") {
+            const prepared = prepareOptions(options, action);
+            const credential = action === "register"
+              ? await navigator.credentials.create({ publicKey: prepared })
+              : await navigator.credentials.get({ publicKey: prepared });
+            result = {
+              credential: action === "register"
+                ? registrationCredential(credential)
+                : authenticationCredential(credential),
+            };
+          } else if (action === "browser_register") {
+            result = await createBrowserCredential();
+          } else if (action === "browser_authenticate") {
+            result = await signWithBrowserCredential(options);
+          }
+          setValue(Object.assign({
             operation_id: componentArgs.operationId,
             action,
-            credential: serialized,
             device_token: deviceToken(),
             origin: window.location.origin,
             hostname: window.location.hostname,
-          });
+          }, result));
           statusText.textContent = copy("verified");
         } catch (error) {
           setValue({
             operation_id: componentArgs.operationId,
-            action: componentArgs.action,
+            action,
             device_token: deviceToken(),
-            error: locale === "ar" ? copy("failed") : error.message || copy("failed"),
+            error_name: error && error.name ? error.name : "Error",
+            error: detailedError(error),
           });
           statusText.textContent = copy("incomplete");
         } finally {

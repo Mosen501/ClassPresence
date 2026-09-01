@@ -93,8 +93,27 @@ _SQLITE_SCHEMA_STATEMENTS = (
         aaguid TEXT NOT NULL DEFAULT '',
         credential_device_type TEXT NOT NULL DEFAULT '',
         credential_backed_up INTEGER NOT NULL DEFAULT 0,
+        auth_method TEXT NOT NULL DEFAULT 'passkey',
         created_at TEXT NOT NULL,
         last_used_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS pending_browser_enrollments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        schedule_id INTEGER REFERENCES course_schedules(id) ON DELETE SET NULL,
+        attendance_date TEXT NOT NULL,
+        credential_id TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        device_binding_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        reviewed_at TEXT,
+        reviewed_by TEXT,
+        registered_device_id INTEGER REFERENCES registered_devices(id) ON DELETE SET NULL
     )
     """,
     """
@@ -230,8 +249,27 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         aaguid TEXT NOT NULL DEFAULT '',
         credential_device_type TEXT NOT NULL DEFAULT '',
         credential_backed_up INTEGER NOT NULL DEFAULT 0,
+        auth_method TEXT NOT NULL DEFAULT 'passkey',
         created_at TEXT NOT NULL,
         last_used_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS pending_browser_enrollments (
+        id BIGSERIAL PRIMARY KEY,
+        student_id BIGINT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        schedule_id BIGINT REFERENCES course_schedules(id) ON DELETE SET NULL,
+        attendance_date TEXT NOT NULL,
+        credential_id TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        device_binding_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        reviewed_at TEXT,
+        reviewed_by TEXT,
+        registered_device_id BIGINT REFERENCES registered_devices(id) ON DELETE SET NULL
     )
     """,
     """
@@ -476,7 +514,8 @@ class AttendanceRepository:
                 rd.created_at AS device_registered_at,
                 rd.last_used_at AS device_last_used_at,
                 rd.credential_device_type AS device_type,
-                rd.credential_backed_up AS device_backed_up
+                rd.credential_backed_up AS device_backed_up,
+                rd.auth_method AS device_auth_method
             FROM students s
             INNER JOIN course_students cs ON cs.student_id = s.id
             LEFT JOIN registered_devices rd ON rd.student_id = s.id
@@ -739,14 +778,15 @@ class AttendanceRepository:
         credential_device_type: str,
         credential_backed_up: bool,
         created_at: str,
+        auth_method: str = "passkey",
     ) -> int:
         query = """
             INSERT INTO registered_devices (
                 student_id, credential_id, public_key, sign_count, device_binding_hash,
                 transports, aaguid, credential_device_type, credential_backed_up,
-                created_at, last_used_at
+                auth_method, created_at, last_used_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         if self.backend == "postgres":
             query += " RETURNING id"
@@ -762,6 +802,7 @@ class AttendanceRepository:
                 aaguid,
                 credential_device_type,
                 int(credential_backed_up),
+                auth_method,
                 created_at,
                 created_at,
             ),
@@ -783,6 +824,216 @@ class AttendanceRepository:
             """,
             (sign_count, last_used_at, device_id),
         )
+
+    def create_pending_browser_enrollment(
+        self,
+        *,
+        student_id: int,
+        course_id: int,
+        schedule_id: int,
+        attendance_date: str,
+        credential_id: str,
+        public_key: str,
+        device_binding_hash: str,
+        expires_at: str,
+        created_at: str,
+    ) -> int:
+        with self._connection() as connection:
+            connection.execute(
+                self._sql(
+                    """
+                    UPDATE pending_browser_enrollments
+                    SET status = 'superseded', reviewed_at = ?
+                    WHERE status = 'pending'
+                      AND (student_id = ? OR device_binding_hash = ?)
+                    """
+                ),
+                (created_at, student_id, device_binding_hash),
+            )
+            query = """
+                INSERT INTO pending_browser_enrollments (
+                    student_id, course_id, schedule_id, attendance_date,
+                    credential_id, public_key, device_binding_hash, expires_at,
+                    status, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            """
+            if self.backend == "postgres":
+                query += " RETURNING id"
+            cursor = connection.execute(
+                self._sql(query),
+                (
+                    student_id,
+                    course_id,
+                    schedule_id,
+                    attendance_date,
+                    credential_id,
+                    public_key,
+                    device_binding_hash,
+                    expires_at,
+                    created_at,
+                ),
+            )
+            if self.backend == "postgres":
+                row = cursor.fetchone()
+                if row is None:
+                    raise RuntimeError("Expected a pending enrollment ID.")
+                return int(row["id"])
+            return int(cursor.lastrowid)
+
+    def get_pending_browser_enrollment(self, pending_id: int) -> Record | None:
+        return self._fetchone(
+            "SELECT * FROM pending_browser_enrollments WHERE id = ?",
+            (pending_id,),
+        )
+
+    def list_pending_browser_enrollments(self, *, course_id: int) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT
+                pbe.*, s.full_name, s.university_id, cs.label AS schedule_label
+            FROM pending_browser_enrollments pbe
+            INNER JOIN students s ON s.id = pbe.student_id
+            LEFT JOIN course_schedules cs ON cs.id = pbe.schedule_id
+            WHERE pbe.course_id = ? AND pbe.status = 'pending'
+            ORDER BY pbe.created_at
+            """,
+            (course_id,),
+        )
+
+    def approve_pending_browser_enrollment(
+        self,
+        *,
+        pending_id: int,
+        actor_identifier: str,
+        reviewed_at: str,
+    ) -> int:
+        with self._connection() as connection:
+            pending = connection.execute(
+                self._sql("SELECT * FROM pending_browser_enrollments WHERE id = ?"),
+                (pending_id,),
+            ).fetchone()
+            if pending is None or str(pending["status"]) != "pending":
+                raise ValueError("This browser enrollment request is no longer pending.")
+            if str(pending["expires_at"]) <= reviewed_at:
+                connection.execute(
+                    self._sql(
+                        """
+                        UPDATE pending_browser_enrollments
+                        SET status = 'expired', reviewed_at = ?, reviewed_by = ?
+                        WHERE id = ?
+                        """
+                    ),
+                    (reviewed_at, actor_identifier, pending_id),
+                )
+                raise ValueError("This browser enrollment request has expired.")
+
+            existing = connection.execute(
+                self._sql(
+                    """
+                    SELECT * FROM registered_devices
+                    WHERE student_id = ? OR device_binding_hash = ? OR credential_id = ?
+                    LIMIT 1
+                    """
+                ),
+                (
+                    int(pending["student_id"]),
+                    str(pending["device_binding_hash"]),
+                    str(pending["credential_id"]),
+                ),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError("The student or browser already has a registered device.")
+
+            insert_query = """
+                INSERT INTO registered_devices (
+                    student_id, credential_id, public_key, sign_count,
+                    device_binding_hash, transports, aaguid,
+                    credential_device_type, credential_backed_up, auth_method,
+                    created_at, last_used_at
+                )
+                VALUES (?, ?, ?, 0, ?, '[]', '', 'browser_key', 0,
+                        'browser_key', ?, ?)
+            """
+            if self.backend == "postgres":
+                insert_query += " RETURNING id"
+            cursor = connection.execute(
+                self._sql(insert_query),
+                (
+                    int(pending["student_id"]),
+                    str(pending["credential_id"]),
+                    str(pending["public_key"]),
+                    str(pending["device_binding_hash"]),
+                    reviewed_at,
+                    reviewed_at,
+                ),
+            )
+            if self.backend == "postgres":
+                inserted = cursor.fetchone()
+                if inserted is None:
+                    raise RuntimeError("Expected a registered device ID.")
+                device_id = int(inserted["id"])
+            else:
+                device_id = int(cursor.lastrowid)
+
+            connection.execute(
+                self._sql(
+                    """
+                    UPDATE pending_browser_enrollments
+                    SET status = 'approved', reviewed_at = ?, reviewed_by = ?,
+                        registered_device_id = ?
+                    WHERE id = ?
+                    """
+                ),
+                (reviewed_at, actor_identifier, device_id, pending_id),
+            )
+            student = connection.execute(
+                self._sql("SELECT * FROM students WHERE id = ?"),
+                (int(pending["student_id"]),),
+            ).fetchone()
+            course = connection.execute(
+                self._sql("SELECT * FROM courses WHERE id = ?"),
+                (int(pending["course_id"]),),
+            ).fetchone()
+            if student is None:
+                raise ValueError("Student was not found.")
+            self._insert_device_audit_event(
+                connection,
+                student_id=int(pending["student_id"]),
+                university_id=str(student["university_id"]),
+                student_name=str(student["full_name"]),
+                course_id=int(pending["course_id"]),
+                course_code=str(course["code"]) if course is not None else "",
+                event_type="manager_browser_key_approved",
+                actor_type="manager",
+                actor_identifier=actor_identifier,
+                previous_device_id=None,
+                previous_device_binding_hash=None,
+                new_device_id=device_id,
+                new_device_binding_hash=str(pending["device_binding_hash"]),
+                created_at=reviewed_at,
+            )
+            return device_id
+
+    def reject_pending_browser_enrollment(
+        self,
+        *,
+        pending_id: int,
+        actor_identifier: str,
+        reviewed_at: str,
+    ) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                self._sql(
+                    """
+                    UPDATE pending_browser_enrollments
+                    SET status = 'rejected', reviewed_at = ?, reviewed_by = ?
+                    WHERE id = ? AND status = 'pending'
+                    """
+                ),
+                (reviewed_at, actor_identifier, pending_id),
+            )
+            return cursor.rowcount > 0
 
     def reset_registered_device_with_audit(
         self,
@@ -1164,12 +1415,14 @@ class AttendanceRepository:
                 ar.accuracy_m,
                 ar.registered_device_id,
                 ar.device_binding_hash,
+                rd.auth_method AS device_auth_method,
                 cs.label AS schedule_label,
                 cs.start_time AS schedule_start_time,
                 cs.end_time AS schedule_end_time
             FROM attendance_records ar
             INNER JOIN students s ON s.id = ar.student_id
             INNER JOIN course_schedules cs ON cs.id = ar.schedule_id
+            LEFT JOIN registered_devices rd ON rd.id = ar.registered_device_id
             WHERE ar.course_id = ?
             ORDER BY ar.stamped_at DESC
             """,
@@ -1238,6 +1491,12 @@ class AttendanceRepository:
                 )
             if "attendance_date" not in otp_columns:
                 connection.execute("ALTER TABLE otp_codes ADD COLUMN attendance_date TEXT")
+            device_columns = self._postgres_columns(connection, "registered_devices")
+            if "auth_method" not in device_columns:
+                connection.execute(
+                    "ALTER TABLE registered_devices ADD COLUMN auth_method TEXT "
+                    "NOT NULL DEFAULT 'passkey'"
+                )
             attendance_columns = self._postgres_columns(connection, "attendance_records")
             if "registered_device_id" not in attendance_columns:
                 connection.execute(
@@ -1265,6 +1524,12 @@ class AttendanceRepository:
             connection.execute("ALTER TABLE otp_codes ADD COLUMN schedule_id INTEGER")
         if "attendance_date" not in otp_columns:
             connection.execute("ALTER TABLE otp_codes ADD COLUMN attendance_date TEXT")
+        device_columns = self._sqlite_columns(connection, "registered_devices")
+        if "auth_method" not in device_columns:
+            connection.execute(
+                "ALTER TABLE registered_devices ADD COLUMN auth_method TEXT "
+                "NOT NULL DEFAULT 'passkey'"
+            )
         attendance_columns = self._sqlite_columns(connection, "attendance_records")
         if "registered_device_id" not in attendance_columns:
             connection.execute("ALTER TABLE attendance_records ADD COLUMN registered_device_id INTEGER")
@@ -1315,6 +1580,12 @@ class AttendanceRepository:
             """
             CREATE INDEX IF NOT EXISTS ix_proxy_alerts_course_created
             ON proxy_alerts (course_id, created_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_pending_browser_course_status
+            ON pending_browser_enrollments (course_id, status, created_at)
             """
         )
 

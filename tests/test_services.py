@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import tempfile
 import unittest
 from datetime import datetime
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from attendance_app.config import Settings
 from attendance_app.database import AttendanceRepository
 from attendance_app.passkeys import RegisteredPasskey, VerifiedPasskey, hash_device_token
 from attendance_app.services import (
     StudentAccessContext,
+    authenticate_student_browser_key,
     authenticate_student_passkey,
     otp_delivery_configuration_error,
     register_student_passkey,
     request_login_code_for_access_context,
+    request_student_browser_key_enrollment,
     reset_student_device,
     resolve_active_student_session,
     resolve_student_access_context,
@@ -25,6 +32,10 @@ from attendance_app.utils import hash_otp
 
 TEST_COURSE_LATITUDE = 1.234567
 TEST_COURSE_LONGITUDE = -2.345678
+
+
+def _base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
 class ServicesTestCase(unittest.TestCase):
@@ -300,6 +311,74 @@ class ServicesTestCase(unittest.TestCase):
                     self.settings,
                     auth=auth,
                 )
+
+    def test_browser_key_fallback_requires_manager_approval_and_authenticates(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        device_token = "test-browser-key-device-00001"
+        payload = {
+            "latitude": TEST_COURSE_LATITUDE,
+            "longitude": TEST_COURSE_LONGITUDE,
+            "accuracy_m": 5,
+            "captured_at": now.isoformat(),
+            "device_token": device_token,
+        }
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        public_key_bytes = private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        public_key = _base64url(public_key_bytes)
+        credential_id = _base64url(hashlib.sha256(public_key_bytes).digest())
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            context = resolve_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                geolocation_payload=payload,
+            )
+            pending_id = request_student_browser_key_enrollment(
+                self.repo,
+                self.settings,
+                access_context=context,
+                credential_id=credential_id,
+                public_key=public_key,
+                device_token=device_token,
+            )
+
+        self.assertIsNone(self.repo.get_registered_device_for_student(int(student["id"])))
+        pending = self.repo.list_pending_browser_enrollments(course_id=int(course["id"]))
+        self.assertEqual([int(row["id"]) for row in pending], [pending_id])
+
+        device_id = self.repo.approve_pending_browser_enrollment(
+            pending_id=pending_id,
+            actor_identifier="manager_user",
+            reviewed_at="2026-07-01T10:01:00+03:00",
+        )
+        message_bytes = b"signed-browser-key-lecture-message"
+        signature = private_key.sign(message_bytes, ec.ECDSA(hashes.SHA256()))
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            verified = authenticate_student_browser_key(
+                self.repo,
+                self.settings,
+                access_context=StudentAccessContext(
+                    **{**context.__dict__, "device_enrolled": True}
+                ),
+                credential_id=credential_id,
+                signature=_base64url(signature),
+                message=_base64url(message_bytes),
+                device_token=device_token,
+            )
+
+        self.assertEqual(verified["device_id"], device_id)
+        device = self.repo.get_registered_device_for_student(int(student["id"]))
+        assert device is not None
+        self.assertEqual(device["auth_method"], "browser_key")
+        self.assertEqual(int(device["sign_count"]), 1)
+        audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
+        self.assertEqual(audit[0]["event_type"], "manager_browser_key_approved")
+        self.assertEqual(audit[0]["actor_identifier"], "manager_user")
 
     def test_registered_device_blocks_another_student_and_creates_alert(self) -> None:
         course, student = self._seed_course()

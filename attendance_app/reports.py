@@ -397,6 +397,7 @@ def _build_roster_sheet(sheet, students: list) -> int:
         "Phone",
         "Device Status",
         "Device Reference",
+        "Registration Method",
         "Registered At",
         "Last Verified",
         "Device Type",
@@ -413,6 +414,7 @@ def _build_roster_sheet(sheet, students: list) -> int:
                 _report_phone(student.get("phone")),
                 "Registered" if device_id else "Not registered",
                 _device_reference(device_id),
+                str(student.get("device_auth_method") or "").replace("_", " ").title(),
                 _excel_datetime(student.get("device_registered_at")),
                 _excel_datetime(student.get("device_last_used_at")),
                 str(student.get("device_type") or "").replace("_", " ").title(),
@@ -425,9 +427,9 @@ def _build_roster_sheet(sheet, students: list) -> int:
         subtitle="Enrolled students and current report-safe device status",
         headers=headers,
         rows=rows,
-        widths=[18, 28, 32, 18, 18, 20, 20, 20, 18, 18],
+        widths=[18, 28, 32, 18, 18, 20, 22, 20, 20, 18, 18],
     )
-    _format_datetime_columns(sheet, last_row, [7, 8])
+    _format_datetime_columns(sheet, last_row, [8, 9])
     _format_text_columns(sheet, last_row, [1, 4, 6])
     if last_row >= 6:
         sheet.conditional_formatting.add(
@@ -492,7 +494,11 @@ def _build_attendance_sheet(sheet, attendance_records: list) -> int:
                 _optional_float(row.get("student_longitude")),
                 float(row["distance_m"]),
                 _optional_float(row.get("accuracy_m")),
-                "Passkey verified"
+                (
+                    "Registered browser verified"
+                    if row.get("device_auth_method") == "browser_key"
+                    else "Passkey verified"
+                )
                 if registered_device_id or row.get("device_binding_hash")
                 else "Imported / legacy",
                 _device_reference(registered_device_id, row.get("device_binding_hash")),

@@ -122,11 +122,20 @@ class DeviceDatabaseTestCase(unittest.TestCase):
                 "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
                 ("ix_device_audit_course_created",),
             ).fetchone()
+            device_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(registered_devices)")
+            }
+            pending_table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("pending_browser_enrollments",),
+            ).fetchone()
 
         self.assertIn("schedule_id", otp_columns)
         self.assertIn("attendance_date", otp_columns)
         self.assertIsNotNone(audit_table)
         self.assertIsNotNone(audit_index)
+        self.assertIn("auth_method", device_columns)
+        self.assertIsNotNone(pending_table)
 
 
 if __name__ == "__main__":

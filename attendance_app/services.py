@@ -8,6 +8,10 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
+from attendance_app.browser_keys import (
+    validate_browser_public_key,
+    verify_browser_key_signature,
+)
 from attendance_app.config import Settings
 from attendance_app.database import AttendanceRepository
 from attendance_app.passkeys import (
@@ -423,6 +427,7 @@ def register_student_passkey(
         credential_device_type=passkey.credential_device_type,
         credential_backed_up=passkey.credential_backed_up,
         created_at=now.isoformat(),
+        auth_method="passkey",
     )
     repo.record_device_registration_audit(
         student_id=access_context.student_id,
@@ -457,6 +462,8 @@ def authenticate_student_passkey(
     device = repo.get_registered_device_for_student(access_context.student_id)
     if device is None:
         raise ValueError("No registered device was found for this student.")
+    if str(device.get("auth_method") or "passkey") != "passkey":
+        raise ValueError("This student uses registered-browser verification instead of a passkey.")
     device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
     if not hmac.compare_digest(
         device_binding_hash,
@@ -492,6 +499,104 @@ def authenticate_student_passkey(
     return {
         "device_id": int(device["id"]),
         "credential_id": passkey.credential_id,
+        "device_binding_hash": device_binding_hash,
+        "schedule_id": access_context.schedule_id,
+        "attendance_date": access_context.attendance_date,
+        "session_expires_at": access_context.session_expires_at,
+    }
+
+
+def request_student_browser_key_enrollment(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    access_context: StudentAccessContext,
+    credential_id: str,
+    public_key: str,
+    device_token: str,
+) -> int:
+    now = now_in_app_timezone(settings)
+    _require_access_context_window(repo, settings, access_context, now=now)
+    validate_browser_public_key(credential_id=credential_id, public_key=public_key)
+    device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
+    if not hmac.compare_digest(device_binding_hash, access_context.device_binding_hash):
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=access_context.course_id,
+            student_id=access_context.student_id,
+            schedule_id=access_context.schedule_id,
+            alert_type="device_changed_during_browser_key_registration",
+            severity="high",
+            message="The browser identity changed during fallback registration.",
+            device_binding_hash=device_binding_hash,
+        )
+        raise ValueError("Device identity changed. Start the check-in again.")
+    if repo.get_registered_device_for_student(access_context.student_id) is not None:
+        raise ValueError("This student already has a registered device.")
+    existing_for_device = repo.get_registered_device_by_binding_hash(device_binding_hash)
+    if existing_for_device is not None:
+        raise ValueError("This device is already registered to another student.")
+    return repo.create_pending_browser_enrollment(
+        student_id=access_context.student_id,
+        course_id=access_context.course_id,
+        schedule_id=access_context.schedule_id,
+        attendance_date=access_context.attendance_date,
+        credential_id=credential_id,
+        public_key=public_key,
+        device_binding_hash=device_binding_hash,
+        expires_at=access_context.session_expires_at,
+        created_at=now.isoformat(),
+    )
+
+
+def authenticate_student_browser_key(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    access_context: StudentAccessContext,
+    credential_id: str,
+    signature: str,
+    message: str,
+    device_token: str,
+) -> dict:
+    now = now_in_app_timezone(settings)
+    _require_access_context_window(repo, settings, access_context, now=now)
+    device = repo.get_registered_device_for_student(access_context.student_id)
+    if device is None:
+        raise ValueError("No registered device was found for this student.")
+    if str(device.get("auth_method") or "passkey") != "browser_key":
+        raise ValueError("This student must verify using the registered passkey.")
+    device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
+    if not hmac.compare_digest(device_binding_hash, str(device["device_binding_hash"])):
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=access_context.course_id,
+            student_id=access_context.student_id,
+            schedule_id=access_context.schedule_id,
+            alert_type="browser_key_from_unrecognized_device",
+            severity="high",
+            message="A browser-key attempt came from an unrecognized browser.",
+            device_binding_hash=device_binding_hash,
+        )
+        raise ValueError("This is not the registered browser for this student.")
+    if not hmac.compare_digest(credential_id, str(device["credential_id"])):
+        raise ValueError("The browser credential does not match the registered device.")
+    verify_browser_key_signature(
+        credential_id=credential_id,
+        public_key=str(device["public_key"]),
+        message=message,
+        signature=signature,
+    )
+    repo.update_registered_device_usage(
+        device_id=int(device["id"]),
+        sign_count=int(device["sign_count"]) + 1,
+        last_used_at=now.isoformat(),
+    )
+    return {
+        "device_id": int(device["id"]),
+        "credential_id": credential_id,
         "device_binding_hash": device_binding_hash,
         "schedule_id": access_context.schedule_id,
         "attendance_date": access_context.attendance_date,
