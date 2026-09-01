@@ -50,7 +50,7 @@ class VerifiedPasskey:
 def hash_device_token(token: str, pepper: str) -> str:
     normalized = token.strip()
     if len(normalized) < 20 or len(normalized) > 200:
-        raise ValueError("This browser could not provide a valid device identity.")
+        raise ValueError("This device could not provide a valid identity.")
     return hmac.new(
         pepper.encode("utf-8"),
         normalized.encode("utf-8"),
@@ -140,7 +140,7 @@ def complete_authentication(
     )
     verified_credential_id = bytes_to_base64url(verification.credential_id)
     if not hmac.compare_digest(verified_credential_id, credential_id):
-        raise ValueError("The passkey does not match the registered device.")
+        raise ValueError("The device credential does not match the registered device.")
     return VerifiedPasskey(
         credential_id=verified_credential_id,
         sign_count=int(verification.new_sign_count),

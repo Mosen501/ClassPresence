@@ -65,6 +65,10 @@ class StudentAccessContext:
     radius_m: float
     device_binding_hash: str
     device_enrolled: bool
+    purpose: str = "enrollment"
+
+
+PORTAL_SESSION_HOURS = 12
 
 
 def otp_delivery_configuration_error(settings: Settings) -> str | None:
@@ -105,9 +109,13 @@ def request_login_code(
         raise ValueError("Student is not enrolled in that course.")
 
     now = now_in_app_timezone(settings)
-    active_schedule = find_active_schedule(
-        repo.list_schedules_for_course(int(course["id"])),
-        now,
+    active_schedule = (
+        find_active_schedule(
+            repo.list_schedules_for_course(int(course["id"])),
+            now,
+        )
+        if _course_is_active_today(course, now)
+        else None
     )
     if active_schedule is None:
         raise ValueError("Student access is closed right now.")
@@ -128,6 +136,7 @@ def resolve_student_access_context(
     *,
     university_id: str,
     geolocation_payload: dict,
+    course_id: int | None = None,
 ) -> StudentAccessContext:
     if "error" in geolocation_payload:
         raise ValueError(str(geolocation_payload["error"]))
@@ -135,6 +144,12 @@ def resolve_student_access_context(
     student_contexts = repo.list_course_contexts_for_student(university_id.strip())
     if not student_contexts:
         raise ValueError("Student ID was not found in any course roster.")
+    if course_id is not None:
+        student_contexts = [
+            context for context in student_contexts if int(context["id"]) == course_id
+        ]
+        if not student_contexts:
+            raise ValueError("Student is not enrolled in the selected course.")
 
     now = now_in_app_timezone(settings)
     latitude, longitude, _accuracy_m, device_binding_hash = _validate_location_payload(
@@ -185,6 +200,7 @@ def resolve_student_access_context(
                 radius_m=float(context["radius_m"]),
                 device_binding_hash=device_binding_hash,
                 device_enrolled=False,
+                purpose="enrollment",
             )
         )
 
@@ -251,6 +267,56 @@ def resolve_student_access_context(
     )
 
 
+def resolve_registered_student_access_context(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    university_id: str,
+    course_id: int,
+) -> StudentAccessContext:
+    contexts = repo.list_course_contexts_for_student(university_id.strip())
+    selected = next((context for context in contexts if int(context["id"]) == course_id), None)
+    if selected is None:
+        raise ValueError("Student is not enrolled in the selected course.")
+    registered_device = repo.get_registered_device_for_student(int(selected["student_id"]))
+    if registered_device is None:
+        raise ValueError("Register this device from the classroom before accessing the portal.")
+
+    now = now_in_app_timezone(settings)
+    active_schedule = (
+        find_active_schedule(
+            repo.list_schedules_for_course(course_id),
+            now,
+        )
+        if _course_is_active_today(selected, now)
+        else None
+    )
+    return StudentAccessContext(
+        course_id=course_id,
+        course_code=str(selected["code"]),
+        course_title=str(selected["title"]),
+        course_latitude=float(selected["latitude"]),
+        course_longitude=float(selected["longitude"]),
+        student_id=int(selected["student_id"]),
+        student_name=str(selected["student_name"]),
+        student_university_id=str(selected["university_id"]),
+        student_email=str(selected["email"] or ""),
+        schedule_id=int(active_schedule["id"]) if active_schedule is not None else 0,
+        schedule_label=str(active_schedule["label"]) if active_schedule is not None else "",
+        schedule_start_time=(
+            str(active_schedule["start_time"]) if active_schedule is not None else ""
+        ),
+        schedule_end_time=str(active_schedule["end_time"]) if active_schedule is not None else "",
+        attendance_date=now.date().isoformat(),
+        session_expires_at=(now + timedelta(hours=PORTAL_SESSION_HOURS)).isoformat(),
+        distance_m=0.0,
+        radius_m=float(selected["radius_m"]),
+        device_binding_hash=str(registered_device["device_binding_hash"]),
+        device_enrolled=True,
+        purpose="portal",
+    )
+
+
 def request_login_code_for_access_context(
     repo: AttendanceRepository,
     settings: Settings,
@@ -276,13 +342,13 @@ def request_login_code_for_access_context(
                 str(registered_device["device_binding_hash"]),
             )
         ):
-            raise ValueError("The verified passkey does not match this student device.")
+            raise ValueError("The verified device does not match this student device.")
         if (
             int(verified_device.get("schedule_id", 0)) != access_context.schedule_id
             or str(verified_device.get("attendance_date", ""))
             != access_context.attendance_date
         ):
-            raise ValueError("Verify the passkey again for this lecture window.")
+            raise ValueError("Verify the device again for this lecture window.")
         credential_id = str(registered_device["credential_id"])
 
     return _issue_login_code(
@@ -355,7 +421,7 @@ def verify_login_code_for_access_context(
         expected_credential_id,
         str(credential_id or ""),
     ):
-        raise ValueError("This code is not bound to the verified passkey.")
+        raise ValueError("This code is not bound to the verified device.")
 
     if hash_otp(code.strip(), settings.otp_pepper) != otp_record["code_hash"]:
         raise ValueError("The one-time code is invalid.")
@@ -387,7 +453,7 @@ def register_student_passkey(
             schedule_id=access_context.schedule_id,
             alert_type="device_changed_during_registration",
             severity="high",
-            message="The browser identity changed during passkey registration.",
+            message="The device identity changed during device registration.",
             device_binding_hash=device_binding_hash,
         )
         raise ValueError("Device identity changed. Start the check-in again.")
@@ -458,12 +524,12 @@ def authenticate_student_passkey(
     expected_origin: str,
 ) -> dict:
     now = now_in_app_timezone(settings)
-    _require_access_context_window(repo, settings, access_context, now=now)
+    _require_device_access_context(repo, settings, access_context, now=now)
     device = repo.get_registered_device_for_student(access_context.student_id)
     if device is None:
         raise ValueError("No registered device was found for this student.")
     if str(device.get("auth_method") or "passkey") != "passkey":
-        raise ValueError("This student uses registered-browser verification instead of a passkey.")
+        raise ValueError("This student uses a different registered-device verification method.")
     device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
     if not hmac.compare_digest(
         device_binding_hash,
@@ -474,13 +540,13 @@ def authenticate_student_passkey(
             now=now,
             course_id=access_context.course_id,
             student_id=access_context.student_id,
-            schedule_id=access_context.schedule_id,
-            alert_type="passkey_from_unrecognized_device",
+            schedule_id=access_context.schedule_id or None,
+            alert_type="unrecognized_device_verification",
             severity="high",
-            message="A passkey attempt came from an unrecognized browser device.",
+            message="A device verification attempt came from an unrecognized device.",
             device_binding_hash=device_binding_hash,
         )
-        raise ValueError("This is not the registered browser for this student.")
+        raise ValueError("This is not the registered device for this student.")
 
     passkey = complete_authentication(
         credential=credential,
@@ -514,7 +580,7 @@ def request_student_browser_key_enrollment(
     credential_id: str,
     public_key: str,
     device_token: str,
-    fallback_reason: str = "Passkey unavailable",
+    fallback_reason: str = "Primary device protection unavailable",
 ) -> int:
     now = now_in_app_timezone(settings)
     _require_access_context_window(repo, settings, access_context, now=now)
@@ -527,9 +593,9 @@ def request_student_browser_key_enrollment(
             course_id=access_context.course_id,
             student_id=access_context.student_id,
             schedule_id=access_context.schedule_id,
-            alert_type="device_changed_during_browser_key_registration",
+            alert_type="device_changed_during_registration",
             severity="high",
-            message="The browser identity changed during fallback registration.",
+            message="The device identity changed during fallback registration.",
             device_binding_hash=device_binding_hash,
         )
         raise ValueError("Device identity changed. Start the check-in again.")
@@ -563,12 +629,12 @@ def authenticate_student_browser_key(
     device_token: str,
 ) -> dict:
     now = now_in_app_timezone(settings)
-    _require_access_context_window(repo, settings, access_context, now=now)
+    _require_device_access_context(repo, settings, access_context, now=now)
     device = repo.get_registered_device_for_student(access_context.student_id)
     if device is None:
         raise ValueError("No registered device was found for this student.")
     if str(device.get("auth_method") or "passkey") != "browser_key":
-        raise ValueError("This student must verify using the registered passkey.")
+        raise ValueError("This student must verify using the registered device method.")
     device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
     if not hmac.compare_digest(device_binding_hash, str(device["device_binding_hash"])):
         _record_proxy_alert(
@@ -576,15 +642,15 @@ def authenticate_student_browser_key(
             now=now,
             course_id=access_context.course_id,
             student_id=access_context.student_id,
-            schedule_id=access_context.schedule_id,
-            alert_type="browser_key_from_unrecognized_device",
+            schedule_id=access_context.schedule_id or None,
+            alert_type="unrecognized_device_verification",
             severity="high",
-            message="A browser-key attempt came from an unrecognized browser.",
+            message="A device verification attempt came from an unrecognized device.",
             device_binding_hash=device_binding_hash,
         )
-        raise ValueError("This is not the registered browser for this student.")
+        raise ValueError("This is not the registered device for this student.")
     if not hmac.compare_digest(credential_id, str(device["credential_id"])):
-        raise ValueError("The browser credential does not match the registered device.")
+        raise ValueError("The device credential does not match the registered device.")
     verify_browser_key_signature(
         credential_id=credential_id,
         public_key=str(device["public_key"]),
@@ -632,9 +698,13 @@ def resolve_active_student_session(
     now = now_in_app_timezone(settings)
     course = repo.get_course(int(auth.get("course_id", 0)))
     student = repo.get_student(int(auth.get("student_id", 0)))
-    if course is None or student is None or not _course_is_active_today(course, now):
+    if course is None or student is None:
         raise ValueError("Student session has expired.")
-    if str(auth.get("attendance_date", "")) != now.date().isoformat():
+    enrolled_student = repo.get_student_for_course(
+        int(course["id"]),
+        str(student["university_id"]),
+    )
+    if enrolled_student is None or int(enrolled_student["id"]) != int(student["id"]):
         raise ValueError("Student session has expired.")
     try:
         expires_at = datetime.fromisoformat(str(auth["session_expires_at"]))
@@ -643,12 +713,14 @@ def resolve_active_student_session(
     if now >= expires_at:
         raise ValueError("Student session has expired.")
 
-    active_schedule = find_active_schedule(
-        repo.list_schedules_for_course(int(course["id"])),
-        now,
+    active_schedule = (
+        find_active_schedule(
+            repo.list_schedules_for_course(int(course["id"])),
+            now,
+        )
+        if _course_is_active_today(course, now)
+        else None
     )
-    if active_schedule is None or int(active_schedule["id"]) != int(auth.get("schedule_id", 0)):
-        raise ValueError("Student session has expired.")
     device = repo.get_registered_device_for_student(int(student["id"]))
     if (
         device is None
@@ -788,15 +860,7 @@ def stamp_attendance(
     if registered_device is None or verified_device is None:
         return AttendanceStampResult(
             success=False,
-            message="Verify your registered passkey before submitting attendance.",
-        )
-    if (
-        int(verified_device.get("schedule_id", 0)) != int(active_schedule["id"])
-        or str(verified_device.get("attendance_date", "")) != attendance_date
-    ):
-        return AttendanceStampResult(
-            success=False,
-            message="Your lecture verification has expired. Verify passkey and OTP again.",
+            message="Verify your registered device before submitting attendance.",
         )
     try:
         session_expires_at = datetime.fromisoformat(
@@ -807,7 +871,7 @@ def stamp_attendance(
     if now >= session_expires_at:
         return AttendanceStampResult(
             success=False,
-            message="Your lecture verification has expired. Verify passkey and OTP again.",
+            message="Your device session has expired. Verify the device again.",
         )
     verified_binding_hash = str(verified_device.get("device_binding_hash", ""))
     if (
@@ -826,7 +890,7 @@ def stamp_attendance(
             schedule_id=int(active_schedule["id"]),
             alert_type="device_changed_before_stamp",
             severity="high",
-            message="The attendance device did not match the verified passkey session.",
+            message="The attendance device did not match the verified device session.",
             device_binding_hash=device_binding_hash,
             geolocation_payload=geolocation_payload,
         )
@@ -1209,6 +1273,37 @@ def _require_access_context_window(
         or current >= datetime.fromisoformat(access_context.session_expires_at)
     ):
         raise ValueError("This lecture verification has expired. Start again.")
+
+
+def _require_device_access_context(
+    repo: AttendanceRepository,
+    settings: Settings,
+    access_context: StudentAccessContext,
+    *,
+    now: datetime | None = None,
+) -> None:
+    if access_context.purpose != "portal":
+        _require_access_context_window(repo, settings, access_context, now=now)
+        return
+
+    current = now or now_in_app_timezone(settings)
+    try:
+        expires_at = datetime.fromisoformat(access_context.session_expires_at)
+    except ValueError as error:
+        raise ValueError("Device verification has expired. Start again.") from error
+    student = repo.get_student(access_context.student_id)
+    enrolled_student = (
+        repo.get_student_for_course(access_context.course_id, str(student["university_id"]))
+        if student is not None
+        else None
+    )
+    if (
+        current >= expires_at
+        or student is None
+        or enrolled_student is None
+        or int(enrolled_student["id"]) != access_context.student_id
+    ):
+        raise ValueError("Device verification has expired. Start again.")
 
 
 def _issue_login_code(

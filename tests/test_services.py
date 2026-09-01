@@ -24,6 +24,7 @@ from attendance_app.services import (
     request_student_browser_key_enrollment,
     reset_student_device,
     resolve_active_student_session,
+    resolve_registered_student_access_context,
     resolve_student_access_context,
     stamp_attendance,
     verify_login_code_for_access_context,
@@ -312,6 +313,112 @@ class ServicesTestCase(unittest.TestCase):
                     auth=auth,
                 )
 
+    def test_registered_device_opens_portal_outside_lecture_without_location(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 14, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        device_token = "test-device-token-00000001"
+        device_hash = hash_device_token(device_token, self.settings.otp_pepper)
+        device_id = self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="credential-one",
+            public_key="public-key-one",
+            sign_count=0,
+            device_binding_hash=device_hash,
+            transports="[]",
+            aaguid="",
+            credential_device_type="single_device",
+            credential_backed_up=False,
+            created_at=now.isoformat(),
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            context = resolve_registered_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                course_id=int(course["id"]),
+            )
+            with patch(
+                "attendance_app.services.complete_authentication",
+                return_value=VerifiedPasskey(credential_id="credential-one", sign_count=1),
+            ):
+                verified = authenticate_student_passkey(
+                    self.repo,
+                    self.settings,
+                    access_context=context,
+                    credential={},
+                    device_token=device_token,
+                    expected_challenge="challenge",
+                    expected_rp_id="localhost",
+                    expected_origin="http://localhost:8501",
+                )
+            active_course, active_student, active_schedule = resolve_active_student_session(
+                self.repo,
+                self.settings,
+                auth={
+                    "course_id": int(course["id"]),
+                    "student_id": int(student["id"]),
+                    **verified,
+                },
+            )
+
+        self.assertEqual(context.purpose, "portal")
+        self.assertEqual(context.schedule_id, 0)
+        self.assertEqual(int(active_course["id"]), int(course["id"]))
+        self.assertEqual(int(active_student["id"]), int(student["id"]))
+        self.assertIsNone(active_schedule)
+        self.assertEqual(verified["device_id"], device_id)
+
+    def test_attendance_stamp_uses_fresh_location_with_portal_device_session(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 15, tzinfo=ZoneInfo("Asia/Riyadh"))
+        device_token = "test-device-token-00000001"
+        device_hash = hash_device_token(device_token, self.settings.otp_pepper)
+        device_id = self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="credential-one",
+            public_key="public-key-one",
+            sign_count=0,
+            device_binding_hash=device_hash,
+            transports="[]",
+            aaguid="",
+            credential_device_type="single_device",
+            credential_backed_up=False,
+            created_at=now.isoformat(),
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            result = stamp_attendance(
+                self.repo,
+                self.settings,
+                course=course,
+                student=student,
+                geolocation_payload={
+                    "latitude": TEST_COURSE_LATITUDE,
+                    "longitude": TEST_COURSE_LONGITUDE,
+                    "accuracy_m": 5,
+                    "sample_count": 3,
+                    "captured_at": now.isoformat(),
+                    "device_token": device_token,
+                },
+                verified_device={
+                    "device_id": device_id,
+                    "credential_id": "credential-one",
+                    "device_binding_hash": device_hash,
+                    "session_expires_at": "2026-07-01T22:00:00+03:00",
+                },
+            )
+
+        self.assertTrue(result.success)
+        self.assertIn("Attendance stamped successfully", result.message)
+        self.assertEqual(
+            self.repo.count_attendance(
+                course_id=int(course["id"]),
+                student_id=int(student["id"]),
+            ),
+            1,
+        )
+
     def test_browser_key_fallback_requires_manager_approval_and_authenticates(self) -> None:
         course, student = self._seed_course()
         now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
@@ -382,7 +489,7 @@ class ServicesTestCase(unittest.TestCase):
         self.assertEqual(device["auth_method"], "browser_key")
         self.assertEqual(int(device["sign_count"]), 1)
         audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
-        self.assertEqual(audit[0]["event_type"], "manager_browser_key_approved")
+        self.assertEqual(audit[0]["event_type"], "manager_device_approved")
         self.assertEqual(audit[0]["actor_identifier"], "manager_user")
 
     def test_registered_device_blocks_another_student_and_creates_alert(self) -> None:
@@ -580,7 +687,7 @@ class ServicesTestCase(unittest.TestCase):
                     "device_token": "test-device-token-00000001",
                 },
             )
-            with self.assertRaisesRegex(ValueError, "passkey again"):
+            with self.assertRaisesRegex(ValueError, "device again"):
                 request_login_code_for_access_context(
                     self.repo,
                     self.settings,

@@ -38,6 +38,13 @@ class AppNavigationTestCase(unittest.TestCase):
         self.assertIn("void performAction()", component_html)
         self.assertNotIn('register: "Register with a passkey"', component_html)
 
+    def test_attendance_uses_one_location_and_stamp_action(self) -> None:
+        app_source = APP_PATH.read_text()
+
+        self.assertIn('geo_capture(\n            "تسجيل الحضور"', app_source)
+        self.assertNotIn('key="submit_attendance"', app_source)
+        self.assertNotIn('"تحديد موقعي الحالي"', app_source)
+
     def test_student_localization_keeps_internal_navigation_values(self) -> None:
         self.assertEqual(STUDENT_SECTIONS, ["Check in", "Status", "History"])
         self.assertEqual(

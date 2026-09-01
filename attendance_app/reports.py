@@ -332,7 +332,7 @@ def _build_executive_summary(
     sheet.merge_cells("A30:J31")
     sheet["A30"] = (
         "This workbook contains complete course reporting records. OTP values, OTP hashes, "
-        "passkey keys, credential IDs, and raw device-binding hashes are intentionally excluded."
+        "device security keys, credential IDs, and raw device-binding hashes are intentionally excluded."
     )
     sheet["A30"].fill = GOLD_FILL
     sheet["A30"].font = Font(name="Aptos", size=9, color=INK)
@@ -365,7 +365,7 @@ def _build_course_details_sheet(sheet, course, generated_at: datetime) -> None:
         ("Timezone", _timezone_name(generated_at)),
         (
             "Security Scope",
-            "Report-safe metadata only; passkey, credential, OTP, and raw device secrets excluded.",
+            "Report-safe metadata only; device credentials, OTP, and raw device secrets excluded.",
         ),
     ]
     start_row = 5
@@ -397,10 +397,10 @@ def _build_roster_sheet(sheet, students: list) -> int:
         "Phone",
         "Device Status",
         "Device Reference",
-        "Registration Method",
+        "Device Protection",
         "Registered At",
         "Last Verified",
-        "Device Type",
+        "Device Credential",
         "Backup State",
     ]
     rows = []
@@ -414,10 +414,10 @@ def _build_roster_sheet(sheet, students: list) -> int:
                 _report_phone(student.get("phone")),
                 "Registered" if device_id else "Not registered",
                 _device_reference(device_id),
-                str(student.get("device_auth_method") or "").replace("_", " ").title(),
+                "Automatic device security" if device_id else "",
                 _excel_datetime(student.get("device_registered_at")),
                 _excel_datetime(student.get("device_last_used_at")),
-                str(student.get("device_type") or "").replace("_", " ").title(),
+                "Registered device" if device_id else "",
                 "Backed up" if student.get("device_backed_up") else "Not backed up",
             ]
         )
@@ -494,11 +494,7 @@ def _build_attendance_sheet(sheet, attendance_records: list) -> int:
                 _optional_float(row.get("student_longitude")),
                 float(row["distance_m"]),
                 _optional_float(row.get("accuracy_m")),
-                (
-                    "Registered browser verified"
-                    if row.get("device_auth_method") == "browser_key"
-                    else "Passkey verified"
-                )
+                "Registered device verified"
                 if registered_device_id or row.get("device_binding_hash")
                 else "Imported / legacy",
                 _device_reference(registered_device_id, row.get("device_binding_hash")),
@@ -731,7 +727,7 @@ def _build_device_audit_sheet(sheet, events: list) -> int:
             _excel_datetime(row["created_at"]),
             row["student_name"],
             str(row["university_id"]),
-            str(row["event_type"]).replace("_", " ").title(),
+            _device_event_label(row["event_type"]),
             str(row["actor_type"]).title(),
             row["actor_identifier"],
             row.get("course_code") or "",
@@ -1036,6 +1032,17 @@ def _device_reference(device_id, device_binding_hash=None) -> str:
         digest = sha256(str(device_binding_hash).encode("utf-8")).hexdigest()[:8].upper()
         return f"DEV-{digest}"
     return ""
+
+
+def _device_event_label(value: object) -> str:
+    event_type = str(value or "").strip().lower()
+    legacy_labels = {
+        "browser_key_from_unrecognized_device": "Unrecognized Device Verification",
+        "passkey_from_unrecognized_device": "Unrecognized Device Verification",
+        "device_changed_during_browser_key_registration": "Device Changed During Registration",
+        "manager_browser_key_approved": "Manager Device Approved",
+    }
+    return legacy_labels.get(event_type, event_type.replace("_", " ").title())
 
 
 def _mask_delivery_target(value) -> str:

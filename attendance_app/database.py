@@ -918,7 +918,7 @@ class AttendanceRepository:
                 (pending_id,),
             ).fetchone()
             if pending is None or str(pending["status"]) != "pending":
-                raise ValueError("This browser enrollment request is no longer pending.")
+                raise ValueError("This device enrollment request is no longer pending.")
             if str(pending["expires_at"]) <= reviewed_at:
                 connection.execute(
                     self._sql(
@@ -930,7 +930,7 @@ class AttendanceRepository:
                     ),
                     (reviewed_at, actor_identifier, pending_id),
                 )
-                raise ValueError("This browser enrollment request has expired.")
+                raise ValueError("This device enrollment request has expired.")
 
             existing = connection.execute(
                 self._sql(
@@ -947,7 +947,7 @@ class AttendanceRepository:
                 ),
             ).fetchone()
             if existing is not None:
-                raise ValueError("The student or browser already has a registered device.")
+                raise ValueError("The student or device already has a registered device.")
 
             insert_query = """
                 INSERT INTO registered_devices (
@@ -956,7 +956,7 @@ class AttendanceRepository:
                     credential_device_type, credential_backed_up, auth_method,
                     created_at, last_used_at
                 )
-                VALUES (?, ?, ?, 0, ?, '[]', '', 'browser_key', 0,
+                VALUES (?, ?, ?, 0, ?, '[]', '', 'device_credential', 0,
                         'browser_key', ?, ?)
             """
             if self.backend == "postgres":
@@ -1008,7 +1008,7 @@ class AttendanceRepository:
                 student_name=str(student["full_name"]),
                 course_id=int(pending["course_id"]),
                 course_code=str(course["code"]) if course is not None else "",
-                event_type="manager_browser_key_approved",
+                event_type="manager_device_approved",
                 actor_type="manager",
                 actor_identifier=actor_identifier,
                 previous_device_id=None,

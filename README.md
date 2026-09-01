@@ -2,7 +2,7 @@
 
 AttendancApp is a Streamlit-based attendance platform for university classes. It gives academic managers a protected portal for configuring courses, defining class meeting windows, syncing official rosters, exporting Excel reports, and geofencing attendance to a configurable classroom radius.
 
-Students sign in with a one-time password tied to the email address on their course roster, verify an enrolled passkey, stamp attendance only during approved schedule windows, and view their attendance statistics in real time. The application also flags exam ineligibility when absences reach 20% of the configured total meetings.
+Students register one device from the classroom using their roster ID, a one-time identity code, and fresh location evidence. After registration they can open the portal from anywhere with that device, while the attendance action silently captures a fresh location and stamps attendance only during approved schedule windows. The application also flags exam ineligibility when absences reach 20% of the configured total meetings.
 
 ## Features
 
@@ -10,12 +10,12 @@ Students sign in with a one-time password tied to the email address on their cou
 - Course setup with course code, course name, start date, end date, timetable windows, classroom location, and attendance radius
 - Bulk student import from `.xlsx` or `.csv` with `student id`, `student name`, and `email` columns
 - Roster-only enrollment workflow so students must exist on the uploaded course roster
-- Student portal with roster-linked one-time password login
-- Automatic passkey-first enrollment bound to the student's registered browser device
-- Manager-approved browser-key fallback for devices without a usable passkey provider
-- Fresh passkey verification and OTP required for every lecture window
-- Student sessions and OTPs expire when the active lecture window ends
-- OTP redemption restricted to the browser and lecture that requested the code
+- One-time classroom device enrollment with roster identity, OTP, and fresh location verification
+- Location-free portal access from the registered device after enrollment
+- Automatic device-security enrollment with manager-approved compatibility fallback
+- Single attendance button that captures fresh location and stamps attendance atomically
+- Initial enrollment verification and OTPs expire when the active lecture window ends
+- Initial OTP redemption restricted to the device and lecture that requested the code
 - One-student-per-device enforcement for every lecture window
 - Manager device resets available during live lectures with permanent audit history
 - Security incident log for blocked proxy attempts with manager review and device reset
@@ -91,25 +91,25 @@ Copy `.env.example` values into your shell environment or deployment platform.
 | `SMTP_PASSWORD` | SMTP password | unset |
 | `SMTP_SENDER` | From-address for email OTP | unset |
 | `SMTP_USE_TLS` | Use STARTTLS | `true` |
-| `WEBAUTHN_RP_ID` | Passkey relying-party hostname; inferred from the app URL when unset | unset |
+| `WEBAUTHN_RP_ID` | Secure-device relying-party hostname; inferred from the app URL when unset | unset |
 | `WEBAUTHN_ORIGIN` | Exact public app origin, such as `https://your-app.streamlit.app` | inferred |
-| `WEBAUTHN_RP_NAME` | Name shown by the device during passkey enrollment | `ClassPresence` |
+| `WEBAUTHN_RP_NAME` | App name shown during secure device enrollment | `ClassPresence` |
 | `LOCATION_MAX_AGE_SECONDS` | Maximum age of accepted location evidence | `90` |
 | `LOCATION_MAX_ACCURACY_M` | Maximum accepted GPS accuracy radius | `50` |
 
 ## Operating Notes
 
-- Browser geolocation usually requires `localhost` during local development or HTTPS in deployment.
-- Passkeys require `localhost` or HTTPS. For production, set `WEBAUTHN_ORIGIN` and `WEBAUTHN_RP_ID` if the public URL cannot be inferred correctly.
-- A student enrolls one device after the first successful OTP. Returning check-ins require that device's passkey before a new OTP is issued.
-- Passkey registration accepts compatible built-in, external, and cross-device authenticators. The student portal checks capability before enrollment and preserves the browser's detailed WebAuthn error when setup is unavailable.
-- Device enrollment uses one action: it tries a passkey first and automatically prepares browser-key enrollment when the passkey provider is genuinely unavailable. A manager must verify the student in person and approve the fallback request from Security before the browser becomes the student's one active registered device.
-- WebAuthn security and relying-party configuration errors do not trigger fallback; they remain visible for administrator correction. The fallback reason is retained with the manager approval request.
-- Browser-key fallback credentials are non-exportable P-256 signing keys stored in that browser profile. Clearing site data, using private browsing, or changing browsers requires an audited manager reset.
-- If a student replaces or clears a registered browser, a manager can reset the device from the Security page, including during a live lecture. Every reset and subsequent enrollment remains in the device audit history.
-- Passkey proof and OTP authorization are valid only for the current lecture. A new lecture always requires a fresh passkey check and a newly issued OTP.
-- Excel reports include complete report-safe activity without row caps. OTP values and hashes, passkey keys, credential IDs, and raw device-binding hashes are never exported.
-- The manager location picker uses OpenStreetMap tiles in the browser, so internet access helps the map render during local testing.
+- Device geolocation usually requires `localhost` during local development or HTTPS in deployment.
+- Secure device verification requires `localhost` or HTTPS. For production, set `WEBAUTHN_ORIGIN` and `WEBAUTHN_RP_ID` if the public URL cannot be inferred correctly.
+- A student enrolls one device after the first successful in-class location and OTP check. Returning portal access verifies the registered device but does not request location or another OTP.
+- Registered-device portal sessions last up to 12 hours and can be opened from any location. Course status and history remain available even when no lecture window is active.
+- During an active lecture, one attendance button gathers several fresh high-accuracy readings, selects the best reading, verifies the registered device binding, checks the classroom radius, and records attendance in one server-side operation.
+- Device registration automatically selects a supported protection method. A manager must verify the student in person and approve a compatibility fallback request from Security before it becomes the student's one active registered device.
+- Security and relying-party configuration errors do not trigger compatibility fallback; they remain visible for administrator correction. The fallback reason is retained with the manager approval request.
+- Compatibility credentials are non-exportable P-256 signing keys stored in the registered device profile. Clearing site data, using private mode, or changing the application profile requires an audited manager reset.
+- If a student replaces or clears a registered device profile, a manager can reset the device from the Security page, including during a live lecture. Every reset and subsequent enrollment remains in the device audit history.
+- Excel reports include complete report-safe activity without row caps. OTP values and hashes, device security keys, credential IDs, and raw device-binding hashes are never exported.
+- The manager location picker uses OpenStreetMap tiles, so internet access helps the map render during local testing.
 - GPS accuracy can drift indoors. The app enforces the configured radius, but device-reported accuracy should still be reviewed during rollout.
 - The first run creates the database schema automatically for either SQLite or PostgreSQL.
 - A demo seed button is available inside the manager console to quickly populate `MAT1116`.
@@ -118,8 +118,8 @@ Copy `.env.example` values into your shell environment or deployment platform.
 
 ## Testing
 
-The repository includes unit and workflow tests for schedules, OTPs, distance checks, device
-registration, passkeys, the browser-key fallback, reporting, and roster parsing.
+The repository includes unit and workflow tests for schedules, OTPs, distance checks, secure
+device registration and fallback, reporting, and roster parsing.
 
 ```bash
 python3 -m unittest discover -s tests

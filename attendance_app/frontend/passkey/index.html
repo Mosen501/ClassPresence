@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Passkey Verification</title>
+    <title>Device Verification</title>
     <style>
       body {
         margin: 0;
@@ -36,7 +36,7 @@
   <body>
     <div class="panel">
       <button id="passkeyButton" type="button">Verify this device</button>
-      <p id="statusText">Your passkey confirms this registered device.</p>
+      <p id="statusText">Secure verification confirms this registered device.</p>
     </div>
     <script>
       const button = document.getElementById("passkeyButton");
@@ -50,14 +50,14 @@
         en: {
           register: "Register this device",
           verify: "Verify this device",
-          browserRegister: "Request browser registration",
-          browserVerify: "Verify this registered browser",
+          browserRegister: "Register this device",
+          browserVerify: "Verify this registered device",
           registerDescription: "The app will select the best secure registration method available.",
-          verifyDescription: "Your credential confirms this registered browser.",
-          browserPreparing: "Passkey unavailable. Preparing secure browser registration...",
-          browserPrepared: "Secure browser registration prepared.",
-          unsupported: "Passkeys are not supported by this browser.",
-          browserUnsupported: "Secure browser-key storage is not supported.",
+          verifyDescription: "Your credential confirms this registered device.",
+          browserPreparing: "Preparing secure device registration...",
+          browserPrepared: "Secure device registration prepared.",
+          unsupported: "Secure device verification is not supported on this device.",
+          browserUnsupported: "Secure device storage is not supported on this device.",
           checking: "Checking device compatibility...",
           waiting: "Waiting for device confirmation...",
           verified: "Device verified.",
@@ -67,14 +67,14 @@
         ar: {
           register: "تسجيل هذا الجهاز",
           verify: "التحقق من هذا الجهاز",
-          browserRegister: "طلب تسجيل هذا المتصفح",
-          browserVerify: "التحقق من المتصفح المسجل",
+          browserRegister: "تسجيل هذا الجهاز",
+          browserVerify: "التحقق من الجهاز المسجل",
           registerDescription: "سيختار النظام تلقائياً أفضل طريقة تسجيل آمنة متاحة.",
-          verifyDescription: "تؤكد بيانات الاعتماد هوية المتصفح المسجل.",
-          browserPreparing: "مفتاح المرور غير متاح. جارٍ إعداد تسجيل المتصفح الآمن...",
-          browserPrepared: "تم إعداد تسجيل المتصفح الآمن.",
-          unsupported: "هذا المتصفح لا يدعم مفتاح المرور.",
-          browserUnsupported: "هذا المتصفح لا يدعم التخزين الآمن لمفتاح الجهاز.",
+          verifyDescription: "تؤكد بيانات الاعتماد هوية الجهاز المسجل.",
+          browserPreparing: "جارٍ إعداد تسجيل الجهاز الآمن...",
+          browserPrepared: "تم إعداد تسجيل الجهاز الآمن.",
+          unsupported: "هذا الجهاز لا يدعم التحقق الآمن من الجهاز.",
+          browserUnsupported: "هذا الجهاز لا يدعم التخزين الآمن لبيانات الجهاز.",
           checking: "جارٍ التحقق من توافق الجهاز...",
           waiting: "بانتظار تأكيد الجهاز...",
           verified: "تم التحقق من الجهاز.",
@@ -197,7 +197,7 @@
         if (!browserKeySupported()) throw new Error(copy("browserUnsupported"));
         const record = await loadBrowserKey(options.credentialId);
         if (!record || !record.privateKey) {
-          throw new Error("The registered browser key is missing. Ask the manager to reset it.");
+          throw new Error("The registered device credential is missing. Ask the manager to reset it.");
         }
         const signature = await crypto.subtle.sign(
           { name: "ECDSA", hash: "SHA-256" },
