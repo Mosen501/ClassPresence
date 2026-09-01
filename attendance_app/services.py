@@ -508,18 +508,6 @@ def reset_student_device(
     actor_identifier: str,
 ) -> bool:
     now = now_in_app_timezone(settings)
-    for course in repo.list_course_contexts_for_student_id(student_id):
-        if not _course_is_active_today(course, now):
-            continue
-        active_schedule = find_active_schedule(
-            repo.list_schedules_for_course(int(course["id"])),
-            now,
-        )
-        if active_schedule is not None:
-            raise ValueError(
-                f"Device reset is blocked while {course['code']} · "
-                f"{active_schedule['label']} is active."
-            )
     return repo.reset_registered_device_with_audit(
         student_id=student_id,
         course_id=course_id,

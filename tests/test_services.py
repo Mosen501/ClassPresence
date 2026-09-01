@@ -511,7 +511,7 @@ class ServicesTestCase(unittest.TestCase):
                     },
                 )
 
-    def test_device_reset_is_blocked_during_lecture_and_audited_after(self) -> None:
+    def test_device_reset_is_allowed_during_lecture_and_audited(self) -> None:
         course, student = self._seed_course()
         device_id = self.repo.create_registered_device(
             student_id=int(student["id"]),
@@ -530,21 +530,6 @@ class ServicesTestCase(unittest.TestCase):
         with patch(
             "attendance_app.services.now_in_app_timezone",
             return_value=datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh")),
-        ):
-            with self.assertRaisesRegex(ValueError, "reset is blocked"):
-                reset_student_device(
-                    self.repo,
-                    self.settings,
-                    student_id=int(student["id"]),
-                    course_id=int(course["id"]),
-                    actor_identifier="manager_user",
-                )
-        self.assertIsNotNone(self.repo.get_registered_device_for_student(int(student["id"])))
-        self.assertEqual(self.repo.list_device_audit_events(course_id=int(course["id"])), [])
-
-        with patch(
-            "attendance_app.services.now_in_app_timezone",
-            return_value=datetime(2026, 7, 1, 12, 0, tzinfo=ZoneInfo("Asia/Riyadh")),
         ):
             self.assertTrue(
                 reset_student_device(

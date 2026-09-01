@@ -16,7 +16,7 @@ Students sign in with a one-time password tied to the email address on their cou
 - Student sessions and OTPs expire when the active lecture window ends
 - OTP redemption restricted to the browser and lecture that requested the code
 - One-student-per-device enforcement for every lecture window
-- Device resets blocked during live lectures with permanent manager audit history
+- Manager device resets available during live lectures with permanent audit history
 - Security incident log for blocked proxy attempts with manager review and device reset
 - End-to-end Excel reporting with executive summary, course details, roster and device status, timetable, attendance evidence, student performance, lecture analytics, security alerts, device audit, and OTP activity
 - Email-based OTP delivery, with a development-friendly console fallback
@@ -101,7 +101,7 @@ Copy `.env.example` values into your shell environment or deployment platform.
 - Browser geolocation usually requires `localhost` during local development or HTTPS in deployment.
 - Passkeys require `localhost` or HTTPS. For production, set `WEBAUTHN_ORIGIN` and `WEBAUTHN_RP_ID` if the public URL cannot be inferred correctly.
 - A student enrolls one device after the first successful OTP. Returning check-ins require that device's passkey before a new OTP is issued.
-- If a student replaces or clears a registered browser, a manager can reset the device from the Security page outside live lectures. Every reset and subsequent enrollment remains in the device audit history.
+- If a student replaces or clears a registered browser, a manager can reset the device from the Security page, including during a live lecture. Every reset and subsequent enrollment remains in the device audit history.
 - Passkey proof and OTP authorization are valid only for the current lecture. A new lecture always requires a fresh passkey check and a newly issued OTP.
 - Excel reports include complete report-safe activity without row caps. OTP values and hashes, passkey keys, credential IDs, and raw device-binding hashes are never exported.
 - The manager location picker uses OpenStreetMap tiles in the browser, so internet access helps the map render during local testing.
