@@ -160,11 +160,14 @@ def resolve_student_access_context(
 
     active_but_outside: list[tuple] = []
     eligible_contexts: list[StudentAccessContext] = []
+    schedules_by_course = repo.list_schedules_for_courses(
+        [int(context["id"]) for context in student_contexts]
+    )
 
     for context in student_contexts:
         if not _course_is_active_today(context, now):
             continue
-        schedules = repo.list_schedules_for_course(int(context["id"]))
+        schedules = schedules_by_course.get(int(context["id"]), [])
         active_schedule = find_active_schedule(schedules, now)
         if active_schedule is None:
             continue
@@ -207,7 +210,21 @@ def resolve_student_access_context(
     if eligible_contexts:
         eligible_contexts.sort(key=lambda item: (item.distance_m, item.course_code))
         selected = eligible_contexts[0]
-        registered_device = repo.get_registered_device_for_student(selected.student_id)
+        selected_context = next(
+            context
+            for context in student_contexts
+            if int(context["id"]) == selected.course_id
+        )
+        registered_device = (
+            {
+                "id": int(selected_context["registered_device_id"]),
+                "device_binding_hash": str(
+                    selected_context["registered_device_binding_hash"]
+                ),
+            }
+            if selected_context.get("registered_device_id") is not None
+            else None
+        )
         conflicting_device = repo.get_registered_device_by_binding_hash(device_binding_hash)
         if (
             conflicting_device is not None
@@ -274,18 +291,22 @@ def resolve_registered_student_access_context(
     university_id: str,
     course_id: int,
 ) -> StudentAccessContext:
-    contexts = repo.list_course_contexts_for_student(university_id.strip())
-    selected = next((context for context in contexts if int(context["id"]) == course_id), None)
-    if selected is None:
+    snapshot = repo.get_student_course_snapshot(
+        course_id=course_id,
+        university_id=university_id.strip(),
+    )
+    if snapshot is None:
         raise ValueError("Student is not enrolled in the selected course.")
-    registered_device = repo.get_registered_device_for_student(int(selected["student_id"]))
+    selected = snapshot["course"]
+    student = snapshot["student"]
+    registered_device = snapshot["device"]
     if registered_device is None:
         raise ValueError("Register this device from the classroom before accessing the portal.")
 
     now = now_in_app_timezone(settings)
     active_schedule = (
         find_active_schedule(
-            repo.list_schedules_for_course(course_id),
+            snapshot["schedules"],
             now,
         )
         if _course_is_active_today(selected, now)
@@ -297,10 +318,10 @@ def resolve_registered_student_access_context(
         course_title=str(selected["title"]),
         course_latitude=float(selected["latitude"]),
         course_longitude=float(selected["longitude"]),
-        student_id=int(selected["student_id"]),
-        student_name=str(selected["student_name"]),
-        student_university_id=str(selected["university_id"]),
-        student_email=str(selected["email"] or ""),
+        student_id=int(student["id"]),
+        student_name=str(student["full_name"]),
+        student_university_id=str(student["university_id"]),
+        student_email=str(student["email"] or ""),
         schedule_id=int(active_schedule["id"]) if active_schedule is not None else 0,
         schedule_label=str(active_schedule["label"]) if active_schedule is not None else "",
         schedule_start_time=(
@@ -324,13 +345,10 @@ def request_login_code_for_access_context(
     access_context: StudentAccessContext,
     verified_device: dict | None = None,
 ) -> OTPRequestResult:
-    _require_access_context_window(repo, settings, access_context)
-    course = repo.get_course(access_context.course_id)
-    student = repo.get_student(access_context.student_id)
-    if course is None or student is None:
-        raise ValueError("Student access context is no longer valid.")
-
-    registered_device = repo.get_registered_device_for_student(access_context.student_id)
+    snapshot = _require_access_context_window(repo, settings, access_context)
+    course = snapshot["course"]
+    student = snapshot["student"]
+    registered_device = snapshot["device"]
     credential_id = None
     if registered_device is not None:
         if not verified_device:
@@ -376,20 +394,20 @@ def verify_login_code_for_access_context(
     schedule_id: int | None = None,
     attendance_date: str | None = None,
 ):
-    course = repo.get_course(course_id)
-    if course is None:
-        raise ValueError("Course was not found.")
-
-    student = repo.get_student(student_id)
-    if student is None:
-        raise ValueError("Student was not found.")
+    snapshot = repo.get_student_course_snapshot(
+        course_id=course_id,
+        student_id=student_id,
+    )
+    if snapshot is None:
+        raise ValueError("Student access context is no longer valid.")
+    course = snapshot["course"]
+    student = snapshot["student"]
 
     now = now_in_app_timezone(settings)
     if not _course_is_active_today(course, now):
         raise ValueError("This course is not active today.")
 
-    schedules = repo.list_schedules_for_course(int(course["id"]))
-    active_schedule = find_active_schedule(schedules, now)
+    active_schedule = find_active_schedule(snapshot["schedules"], now)
     if active_schedule is None:
         raise ValueError("Student access is closed right now. Request a new code during class.")
     current_date = now.date().isoformat()
@@ -458,10 +476,28 @@ def register_student_passkey(
         )
         raise ValueError("Device identity changed. Start the check-in again.")
 
-    existing_for_student = repo.get_registered_device_for_student(access_context.student_id)
+    registration_conflicts = repo.list_registered_device_conflicts(
+        student_id=access_context.student_id,
+        device_binding_hash=device_binding_hash,
+    )
+    existing_for_student = next(
+        (
+            device
+            for device in registration_conflicts
+            if int(device["student_id"]) == access_context.student_id
+        ),
+        None,
+    )
     if existing_for_student is not None:
         raise ValueError("This student already has a registered device.")
-    existing_for_device = repo.get_registered_device_by_binding_hash(device_binding_hash)
+    existing_for_device = next(
+        (
+            device
+            for device in registration_conflicts
+            if str(device["device_binding_hash"]) == device_binding_hash
+        ),
+        None,
+    )
     if existing_for_device is not None:
         _record_proxy_alert(
             repo,
@@ -524,8 +560,12 @@ def authenticate_student_passkey(
     expected_origin: str,
 ) -> dict:
     now = now_in_app_timezone(settings)
-    _require_device_access_context(repo, settings, access_context, now=now)
-    device = repo.get_registered_device_for_student(access_context.student_id)
+    snapshot = _require_device_access_context(repo, settings, access_context, now=now)
+    device = (
+        snapshot["device"]
+        if snapshot is not None
+        else repo.get_registered_device_for_student(access_context.student_id)
+    )
     if device is None:
         raise ValueError("No registered device was found for this student.")
     if str(device.get("auth_method") or "passkey") != "passkey":
@@ -599,9 +639,23 @@ def request_student_browser_key_enrollment(
             device_binding_hash=device_binding_hash,
         )
         raise ValueError("Device identity changed. Start the check-in again.")
-    if repo.get_registered_device_for_student(access_context.student_id) is not None:
+    registration_conflicts = repo.list_registered_device_conflicts(
+        student_id=access_context.student_id,
+        device_binding_hash=device_binding_hash,
+    )
+    if any(
+        int(device["student_id"]) == access_context.student_id
+        for device in registration_conflicts
+    ):
         raise ValueError("This student already has a registered device.")
-    existing_for_device = repo.get_registered_device_by_binding_hash(device_binding_hash)
+    existing_for_device = next(
+        (
+            device
+            for device in registration_conflicts
+            if str(device["device_binding_hash"]) == device_binding_hash
+        ),
+        None,
+    )
     if existing_for_device is not None:
         raise ValueError("This device is already registered to another student.")
     return repo.create_pending_browser_enrollment(
@@ -629,8 +683,12 @@ def authenticate_student_browser_key(
     device_token: str,
 ) -> dict:
     now = now_in_app_timezone(settings)
-    _require_device_access_context(repo, settings, access_context, now=now)
-    device = repo.get_registered_device_for_student(access_context.student_id)
+    snapshot = _require_device_access_context(repo, settings, access_context, now=now)
+    device = (
+        snapshot["device"]
+        if snapshot is not None
+        else repo.get_registered_device_for_student(access_context.student_id)
+    )
     if device is None:
         raise ValueError("No registered device was found for this student.")
     if str(device.get("auth_method") or "passkey") != "browser_key":
@@ -696,16 +754,14 @@ def resolve_active_student_session(
     auth: dict,
 ):
     now = now_in_app_timezone(settings)
-    course = repo.get_course(int(auth.get("course_id", 0)))
-    student = repo.get_student(int(auth.get("student_id", 0)))
-    if course is None or student is None:
-        raise ValueError("Student session has expired.")
-    enrolled_student = repo.get_student_for_course(
-        int(course["id"]),
-        str(student["university_id"]),
+    snapshot = repo.get_student_course_snapshot(
+        course_id=int(auth.get("course_id", 0)),
+        student_id=int(auth.get("student_id", 0)),
     )
-    if enrolled_student is None or int(enrolled_student["id"]) != int(student["id"]):
+    if snapshot is None:
         raise ValueError("Student session has expired.")
+    course = snapshot["course"]
+    student = snapshot["student"]
     try:
         expires_at = datetime.fromisoformat(str(auth["session_expires_at"]))
     except (KeyError, ValueError) as error:
@@ -715,13 +771,13 @@ def resolve_active_student_session(
 
     active_schedule = (
         find_active_schedule(
-            repo.list_schedules_for_course(int(course["id"])),
+            snapshot["schedules"],
             now,
         )
         if _course_is_active_today(course, now)
         else None
     )
-    device = repo.get_registered_device_for_student(int(student["id"]))
+    device = snapshot["device"]
     if (
         device is None
         or int(device["id"]) != int(auth.get("device_id", 0))
@@ -856,7 +912,14 @@ def stamp_attendance(
         return AttendanceStampResult(success=False, message=str(error))
     attendance_date = now.date().isoformat()
 
-    registered_device = repo.get_registered_device_for_student(int(student["id"]))
+    stamp_state = repo.get_attendance_stamp_state(
+        course_id=int(course["id"]),
+        student_id=int(student["id"]),
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=attendance_date,
+        device_binding_hash=device_binding_hash,
+    )
+    registered_device = stamp_state["registered_device"]
     if registered_device is None or verified_device is None:
         return AttendanceStampResult(
             success=False,
@@ -899,23 +962,13 @@ def stamp_attendance(
             message="Attendance must be submitted from the verified device.",
         )
 
-    if repo.attendance_exists(
-        course_id=int(course["id"]),
-        student_id=int(student["id"]),
-        schedule_id=int(active_schedule["id"]),
-        attendance_date=attendance_date,
-    ):
+    if stamp_state["existing_attendance"] is not None:
         return AttendanceStampResult(
             success=False,
             message="Attendance has already been stamped for this schedule window.",
         )
 
-    existing_device_stamp = repo.find_attendance_for_device_window(
-        course_id=int(course["id"]),
-        schedule_id=int(active_schedule["id"]),
-        attendance_date=attendance_date,
-        device_binding_hash=device_binding_hash,
-    )
+    existing_device_stamp = stamp_state["existing_device_stamp"]
     if (
         existing_device_stamp is not None
         and int(existing_device_stamp["student_id"]) != int(student["id"])
@@ -1256,15 +1309,18 @@ def _require_access_context_window(
     access_context: StudentAccessContext,
     *,
     now: datetime | None = None,
-) -> None:
+) -> dict:
     current = now or now_in_app_timezone(settings)
     if access_context.attendance_date != current.date().isoformat():
         raise ValueError("This lecture verification has expired. Start again.")
-    course = repo.get_course(access_context.course_id)
-    if course is None or not _course_is_active_today(course, current):
+    snapshot = repo.get_student_course_snapshot(
+        course_id=access_context.course_id,
+        student_id=access_context.student_id,
+    )
+    if snapshot is None or not _course_is_active_today(snapshot["course"], current):
         raise ValueError("This lecture verification has expired. Start again.")
     active_schedule = find_active_schedule(
-        repo.list_schedules_for_course(access_context.course_id),
+        snapshot["schedules"],
         current,
     )
     if (
@@ -1273,6 +1329,7 @@ def _require_access_context_window(
         or current >= datetime.fromisoformat(access_context.session_expires_at)
     ):
         raise ValueError("This lecture verification has expired. Start again.")
+    return snapshot
 
 
 def _require_device_access_context(
@@ -1281,29 +1338,26 @@ def _require_device_access_context(
     access_context: StudentAccessContext,
     *,
     now: datetime | None = None,
-) -> None:
+) -> dict | None:
     if access_context.purpose != "portal":
         _require_access_context_window(repo, settings, access_context, now=now)
-        return
+        return None
 
     current = now or now_in_app_timezone(settings)
     try:
         expires_at = datetime.fromisoformat(access_context.session_expires_at)
     except ValueError as error:
         raise ValueError("Device verification has expired. Start again.") from error
-    student = repo.get_student(access_context.student_id)
-    enrolled_student = (
-        repo.get_student_for_course(access_context.course_id, str(student["university_id"]))
-        if student is not None
-        else None
+    snapshot = repo.get_student_course_snapshot(
+        course_id=access_context.course_id,
+        student_id=access_context.student_id,
     )
     if (
         current >= expires_at
-        or student is None
-        or enrolled_student is None
-        or int(enrolled_student["id"]) != access_context.student_id
+        or snapshot is None
     ):
         raise ValueError("Device verification has expired. Start again.")
+    return snapshot
 
 
 def _issue_login_code(

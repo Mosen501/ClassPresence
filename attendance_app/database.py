@@ -13,8 +13,14 @@ except ImportError:  # pragma: no cover - sqlite-only local/test environments
     psycopg = None
     dict_row = None
 
+try:  # pragma: no cover - exercised in deployments with Postgres configured
+    from psycopg_pool import ConnectionPool
+except ImportError:  # pragma: no cover - sqlite-only local/test environments
+    ConnectionPool = None
+
 
 Record = dict[str, Any]
+SCHEMA_VERSION = "2026-09-01-1"
 
 _SQLITE_SCHEMA_STATEMENTS = (
     """
@@ -332,7 +338,7 @@ _POSTGRES_SCHEMA_STATEMENTS = (
 
 
 class AttendanceRepository:
-    def __init__(self, database_target: str) -> None:
+    def __init__(self, database_target: str, *, use_pool: bool = False) -> None:
         self.database_target = database_target.strip()
         self.backend = _detect_backend(self.database_target)
         self.db_path = (
@@ -340,15 +346,69 @@ class AttendanceRepository:
             if self.backend == "sqlite"
             else None
         )
+        self._pool = None
+        if self.backend == "postgres" and use_pool:
+            self._pool = self._create_pool()
+
+    def _create_pool(self):
+        if ConnectionPool is None or dict_row is None:
+            raise RuntimeError(
+                "PostgreSQL pooling requires `psycopg[binary,pool]`. Install dependencies "
+                "before running the app with ATTENDANCE_DB_URL."
+            )
+        pool = ConnectionPool(
+            conninfo=_normalize_postgres_conninfo(self.database_target),
+            min_size=1,
+            max_size=8,
+            kwargs={"row_factory": dict_row, "connect_timeout": 10},
+            timeout=10,
+            max_idle=300,
+            max_lifetime=1800,
+            name="classpresence",
+            open=True,
+        )
+        try:
+            pool.wait(timeout=10)
+        except Exception as error:
+            pool.close()
+            raise RuntimeError(
+                "Could not initialize the PostgreSQL connection pool. Check the database URL "
+                "and confirm the database is reachable from the deployment region."
+            ) from error
+        return pool
 
     def init_schema(self) -> None:
         if self.backend == "sqlite" and self.db_path is not None and str(self.db_path) != ":memory:":
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         with self._connection() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            schema_version = connection.execute(
+                self._sql("SELECT value FROM app_metadata WHERE key = ?"),
+                ("schema_version",),
+            ).fetchone()
+            if schema_version is not None and str(schema_version["value"]) == SCHEMA_VERSION:
+                return
             for statement in self._schema_statements():
                 connection.execute(statement)
             self._migrate_schema(connection)
+            connection.execute(
+                self._sql(
+                    """
+                    INSERT INTO app_metadata (key, value)
+                    VALUES (?, ?)
+                    ON CONFLICT (key) DO UPDATE SET value = excluded.value
+                    """
+                ),
+                ("schema_version", SCHEMA_VERSION),
+            )
 
     def create_course(
         self,
@@ -536,15 +596,131 @@ class AttendanceRepository:
                 s.full_name AS student_name,
                 s.university_id,
                 s.email,
-                s.phone
+                s.phone,
+                rd.id AS registered_device_id,
+                rd.device_binding_hash AS registered_device_binding_hash
             FROM students s
             INNER JOIN course_students cs ON cs.student_id = s.id
             INNER JOIN courses c ON c.id = cs.course_id
+            LEFT JOIN registered_devices rd ON rd.student_id = s.id
             WHERE s.university_id = ?
             ORDER BY c.code
             """,
             (university_id,),
         )
+
+    def get_student_course_snapshot(
+        self,
+        *,
+        course_id: int,
+        student_id: int | None = None,
+        university_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if (student_id is None) == (university_id is None):
+            raise ValueError("Provide exactly one student identifier.")
+        selector = "s.id" if student_id is not None else "s.university_id"
+        selector_value = student_id if student_id is not None else university_id
+        with self._connection() as connection:
+            row = connection.execute(
+                self._sql(
+                    f"""
+                    SELECT
+                        c.id AS course_id,
+                        c.code AS course_code,
+                        c.title AS course_title,
+                        c.start_date AS course_start_date,
+                        c.end_date AS course_end_date,
+                        c.total_meetings AS course_total_meetings,
+                        c.latitude AS course_latitude,
+                        c.longitude AS course_longitude,
+                        c.radius_m AS course_radius_m,
+                        c.absence_limit_pct AS course_absence_limit_pct,
+                        c.created_at AS course_created_at,
+                        s.id AS student_id,
+                        s.full_name AS student_full_name,
+                        s.university_id AS student_university_id,
+                        s.email AS student_email,
+                        s.phone AS student_phone,
+                        s.created_at AS student_created_at,
+                        rd.id AS registered_device_id,
+                        rd.credential_id AS registered_device_credential_id,
+                        rd.public_key AS registered_device_public_key,
+                        rd.sign_count AS registered_device_sign_count,
+                        rd.device_binding_hash AS registered_device_binding_hash,
+                        rd.transports AS registered_device_transports,
+                        rd.aaguid AS registered_device_aaguid,
+                        rd.credential_device_type AS registered_device_type,
+                        rd.credential_backed_up AS registered_device_backed_up,
+                        rd.auth_method AS registered_device_auth_method,
+                        rd.created_at AS registered_device_created_at,
+                        rd.last_used_at AS registered_device_last_used_at
+                    FROM courses c
+                    INNER JOIN course_students cs ON cs.course_id = c.id
+                    INNER JOIN students s ON s.id = cs.student_id
+                    LEFT JOIN registered_devices rd ON rd.student_id = s.id
+                    WHERE c.id = ? AND {selector} = ?
+                    LIMIT 1
+                    """
+                ),
+                (course_id, selector_value),
+            ).fetchone()
+            if row is None:
+                return None
+            schedules = connection.execute(
+                self._sql(
+                    """
+                    SELECT *
+                    FROM course_schedules
+                    WHERE course_id = ?
+                    ORDER BY weekday, start_time, label
+                    """
+                ),
+                (course_id,),
+            ).fetchall()
+
+        row = dict(row)
+        device = None
+        if row.get("registered_device_id") is not None:
+            device = {
+                "id": int(row["registered_device_id"]),
+                "student_id": int(row["student_id"]),
+                "credential_id": str(row["registered_device_credential_id"]),
+                "public_key": str(row["registered_device_public_key"]),
+                "sign_count": int(row["registered_device_sign_count"]),
+                "device_binding_hash": str(row["registered_device_binding_hash"]),
+                "transports": str(row["registered_device_transports"]),
+                "aaguid": str(row["registered_device_aaguid"]),
+                "credential_device_type": str(row["registered_device_type"]),
+                "credential_backed_up": int(row["registered_device_backed_up"]),
+                "auth_method": str(row["registered_device_auth_method"]),
+                "created_at": row["registered_device_created_at"],
+                "last_used_at": row["registered_device_last_used_at"],
+            }
+        return {
+            "course": {
+                "id": int(row["course_id"]),
+                "code": row["course_code"],
+                "title": row["course_title"],
+                "start_date": row["course_start_date"],
+                "end_date": row["course_end_date"],
+                "total_meetings": int(row["course_total_meetings"]),
+                "latitude": float(row["course_latitude"]),
+                "longitude": float(row["course_longitude"]),
+                "radius_m": float(row["course_radius_m"]),
+                "absence_limit_pct": float(row["course_absence_limit_pct"]),
+                "created_at": row["course_created_at"],
+            },
+            "student": {
+                "id": int(row["student_id"]),
+                "full_name": row["student_full_name"],
+                "university_id": row["student_university_id"],
+                "email": row["student_email"],
+                "phone": row["student_phone"],
+                "created_at": row["student_created_at"],
+            },
+            "device": device,
+            "schedules": [dict(schedule) for schedule in schedules],
+        }
 
     def list_course_contexts_for_student_id(self, student_id: int) -> list[Record]:
         return self._fetchall(
@@ -586,6 +762,95 @@ class AttendanceRepository:
             """,
             (course_id,),
         )
+
+    def list_schedules_for_courses(self, course_ids: list[int]) -> dict[int, list[Record]]:
+        if not course_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in course_ids)
+        rows = self._fetchall(
+            f"""
+            SELECT *
+            FROM course_schedules
+            WHERE course_id IN ({placeholders})
+            ORDER BY course_id, weekday, start_time, label
+            """,
+            course_ids,
+        )
+        schedules_by_course = {course_id: [] for course_id in course_ids}
+        for row in rows:
+            schedules_by_course.setdefault(int(row["course_id"]), []).append(row)
+        return schedules_by_course
+
+    def get_manager_today_snapshot(
+        self,
+        *,
+        course_ids: list[int],
+        attendance_date: str,
+    ) -> dict[str, Any]:
+        if not course_ids:
+            return {
+                "student_counts": {},
+                "schedules_by_course": {},
+                "attendance_counts": {},
+                "records_today": 0,
+            }
+
+        placeholders = ", ".join("?" for _ in course_ids)
+        with self._connection() as connection:
+            student_rows = connection.execute(
+                self._sql(
+                    f"""
+                    SELECT course_id, COUNT(*) AS student_count
+                    FROM course_students
+                    WHERE course_id IN ({placeholders})
+                    GROUP BY course_id
+                    """
+                ),
+                course_ids,
+            ).fetchall()
+            schedule_rows = connection.execute(
+                self._sql(
+                    f"""
+                    SELECT *
+                    FROM course_schedules
+                    WHERE course_id IN ({placeholders})
+                    ORDER BY course_id, weekday, start_time, label
+                    """
+                ),
+                course_ids,
+            ).fetchall()
+            attendance_rows = connection.execute(
+                self._sql(
+                    f"""
+                    SELECT course_id, schedule_id, COUNT(*) AS attendance_count
+                    FROM attendance_records
+                    WHERE attendance_date = ?
+                      AND course_id IN ({placeholders})
+                    GROUP BY course_id, schedule_id
+                    """
+                ),
+                (attendance_date, *course_ids),
+            ).fetchall()
+
+        student_counts = {
+            int(row["course_id"]): int(row["student_count"])
+            for row in student_rows
+        }
+        schedules_by_course = {course_id: [] for course_id in course_ids}
+        for row in schedule_rows:
+            schedules_by_course.setdefault(int(row["course_id"]), []).append(dict(row))
+        attendance_counts = {
+            (int(row["course_id"]), int(row["schedule_id"])): int(
+                row["attendance_count"]
+            )
+            for row in attendance_rows
+        }
+        return {
+            "student_counts": student_counts,
+            "schedules_by_course": schedules_by_course,
+            "attendance_counts": attendance_counts,
+            "records_today": sum(attendance_counts.values()),
+        }
 
     def delete_schedule(self, *, schedule_id: int, course_id: int) -> bool:
         with self._connection() as connection:
@@ -765,6 +1030,21 @@ class AttendanceRepository:
         return self._fetchone(
             "SELECT * FROM registered_devices WHERE device_binding_hash = ?",
             (device_binding_hash,),
+        )
+
+    def list_registered_device_conflicts(
+        self,
+        *,
+        student_id: int,
+        device_binding_hash: str,
+    ) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT *
+            FROM registered_devices
+            WHERE student_id = ? OR device_binding_hash = ?
+            """,
+            (student_id, device_binding_hash),
         )
 
     def create_registered_device(
@@ -1298,6 +1578,61 @@ class AttendanceRepository:
         )
         return row is not None
 
+    def get_attendance_stamp_state(
+        self,
+        *,
+        course_id: int,
+        student_id: int,
+        schedule_id: int,
+        attendance_date: str,
+        device_binding_hash: str,
+    ) -> dict[str, Record | None]:
+        with self._connection() as connection:
+            registered_device = connection.execute(
+                self._sql("SELECT * FROM registered_devices WHERE student_id = ?"),
+                (student_id,),
+            ).fetchone()
+            existing_attendance = connection.execute(
+                self._sql(
+                    """
+                    SELECT id
+                    FROM attendance_records
+                    WHERE course_id = ?
+                      AND student_id = ?
+                      AND schedule_id = ?
+                      AND attendance_date = ?
+                    LIMIT 1
+                    """
+                ),
+                (course_id, student_id, schedule_id, attendance_date),
+            ).fetchone()
+            existing_device_stamp = connection.execute(
+                self._sql(
+                    """
+                    SELECT ar.*, s.full_name, s.university_id
+                    FROM attendance_records ar
+                    INNER JOIN students s ON s.id = ar.student_id
+                    WHERE ar.course_id = ?
+                      AND ar.schedule_id = ?
+                      AND ar.attendance_date = ?
+                      AND ar.device_binding_hash = ?
+                    LIMIT 1
+                    """
+                ),
+                (course_id, schedule_id, attendance_date, device_binding_hash),
+            ).fetchone()
+        return {
+            "registered_device": (
+                dict(registered_device) if registered_device is not None else None
+            ),
+            "existing_attendance": (
+                dict(existing_attendance) if existing_attendance is not None else None
+            ),
+            "existing_device_stamp": (
+                dict(existing_device_stamp) if existing_device_stamp is not None else None
+            ),
+        }
+
     def record_attendance(
         self,
         *,
@@ -1462,6 +1797,11 @@ class AttendanceRepository:
 
     @contextmanager
     def _connection(self):
+        if self._pool is not None:
+            with self._pool.connection() as connection:
+                yield connection
+            return
+
         connection = self._connect()
         try:
             yield connection

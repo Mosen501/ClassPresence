@@ -44,6 +44,19 @@ class AppNavigationTestCase(unittest.TestCase):
         self.assertIn('geo_capture(\n            "تسجيل الحضور"', app_source)
         self.assertNotIn('key="submit_attendance"', app_source)
         self.assertNotIn('"تحديد موقعي الحالي"', app_source)
+        self.assertEqual(app_source.count("resolve_active_student_session("), 1)
+
+    def test_repository_initialization_is_cached_as_a_resource(self) -> None:
+        app_source = APP_PATH.read_text()
+
+        self.assertIn("@st.cache_resource(show_spinner=False)", app_source)
+        self.assertIn("AttendanceRepository(database_target, use_pool=True)", app_source)
+        self.assertNotIn("st.cache_data.clear()", app_source)
+        today_start = app_source.index("def _render_manager_today")
+        today_end = app_source.index("def _render_manager_timetable")
+        today_source = app_source[today_start:today_end]
+        self.assertIn("_cached_manager_today_snapshot", today_source)
+        self.assertNotIn("_cached_list_course_attendance", today_source)
 
     def test_student_localization_keeps_internal_navigation_values(self) -> None:
         self.assertEqual(STUDENT_SECTIONS, ["Check in", "Status", "History"])

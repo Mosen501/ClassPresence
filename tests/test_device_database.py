@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
+from unittest.mock import patch
 
 from attendance_app.database import AttendanceRepository
 
@@ -68,6 +69,68 @@ class DeviceDatabaseTestCase(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.repo.record_attendance(student_id=int(students[1]["id"]), **values)
 
+    def test_student_course_snapshot_uses_one_connection_checkout(self) -> None:
+        student = self.repo.get_student_for_course(int(self.course["id"]), "U1")
+        assert student is not None
+
+        with patch.object(self.repo, "_connect", wraps=self.repo._connect) as connect:
+            snapshot = self.repo.get_student_course_snapshot(
+                course_id=int(self.course["id"]),
+                student_id=int(student["id"]),
+            )
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot["course"]["code"], "SEC101")
+        self.assertEqual(snapshot["student"]["university_id"], "U1")
+        self.assertEqual(len(snapshot["schedules"]), 1)
+        connect.assert_called_once_with()
+
+    def test_manager_today_snapshot_uses_aggregates_in_one_connection(self) -> None:
+        course_id = int(self.course["id"])
+        student = self.repo.get_student_for_course(course_id, "U1")
+        schedule = self.repo.list_schedules_for_course(course_id)[0]
+        assert student is not None
+        self.repo.record_attendance(
+            course_id=course_id,
+            student_id=int(student["id"]),
+            schedule_id=int(schedule["id"]),
+            attendance_date="2026-09-01",
+            stamped_at="2026-09-01T09:05:00+03:00",
+            student_latitude=24.0,
+            student_longitude=46.0,
+            accuracy_m=5.0,
+            distance_m=1.0,
+            device_info="{}",
+        )
+
+        with patch.object(self.repo, "_connect", wraps=self.repo._connect) as connect:
+            snapshot = self.repo.get_manager_today_snapshot(
+                course_ids=[course_id],
+                attendance_date="2026-09-01",
+            )
+
+        self.assertEqual(snapshot["student_counts"][course_id], 2)
+        self.assertEqual(snapshot["records_today"], 1)
+        self.assertEqual(
+            snapshot["attendance_counts"][(course_id, int(schedule["id"]))],
+            1,
+        )
+        connect.assert_called_once_with()
+
+    def test_postgres_repository_starts_a_bounded_connection_pool(self) -> None:
+        with patch("attendance_app.database.ConnectionPool") as pool_factory:
+            pool = pool_factory.return_value
+            repo = AttendanceRepository(
+                "postgresql://user:password@example.test/database",
+                use_pool=True,
+            )
+
+        self.assertIs(repo._pool, pool)
+        pool.wait.assert_called_once_with(timeout=10)
+        self.assertEqual(pool_factory.call_args.kwargs["min_size"], 1)
+        self.assertEqual(pool_factory.call_args.kwargs["max_size"], 8)
+
     def test_existing_database_migrates_lecture_security_columns(self) -> None:
         database_path = f"{self.temp_dir.name}/legacy.db"
         with closing(sqlite3.connect(database_path)) as connection:
@@ -108,7 +171,9 @@ class DeviceDatabaseTestCase(unittest.TestCase):
 
         legacy_repo = AttendanceRepository(database_path)
         legacy_repo.init_schema()
-        legacy_repo.init_schema()
+        with patch.object(legacy_repo, "_migrate_schema") as migrate:
+            legacy_repo.init_schema()
+        migrate.assert_not_called()
 
         with closing(sqlite3.connect(database_path)) as connection:
             otp_columns = {

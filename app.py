@@ -19,9 +19,6 @@ from attendance_app.passkeys import (
     build_registration_options,
     passkey_failure_allows_browser_fallback,
 )
-from attendance_app.report_importer import import_attendance_report_bytes
-from attendance_app.reports import build_course_report_xlsx
-from attendance_app.roster import parse_roster_file
 from attendance_app.security import verify_password
 from attendance_app.services import (
     StudentAccessContext,
@@ -42,6 +39,12 @@ from attendance_app.services import (
     verify_login_code_for_access_context,
 )
 from attendance_app.utils import parse_hhmm, parse_iso_date, weekday_label
+
+
+def build_course_report_xlsx(**kwargs) -> bytes:
+    from attendance_app.reports import build_course_report_xlsx as build_report
+
+    return build_report(**kwargs)
 
 APP_CSS = """
 <style>
@@ -771,58 +774,65 @@ STUDENT_MESSAGE_TRANSLATIONS = {
 }
 
 
+@st.cache_resource(show_spinner=False)
+def _get_repository(database_target: str) -> AttendanceRepository:
+    repo = AttendanceRepository(database_target, use_pool=True)
+    repo.init_schema()
+    return repo
+
+
 @st.cache_data(
-    ttl=15,
+    ttl=300,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_list_courses(database_target: str) -> list[dict]:
-    return AttendanceRepository(database_target).list_courses()
+    return _get_repository(database_target).list_courses()
 
 
 @st.cache_data(
-    ttl=15,
+    ttl=300,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_get_course(database_target: str, course_id: int) -> dict | None:
-    return AttendanceRepository(database_target).get_course(course_id)
+    return _get_repository(database_target).get_course(course_id)
 
 
 @st.cache_data(
-    ttl=15,
+    ttl=300,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_get_student(database_target: str, student_id: int) -> dict | None:
-    return AttendanceRepository(database_target).get_student(student_id)
+    return _get_repository(database_target).get_student(student_id)
 
 
 @st.cache_data(
-    ttl=15,
+    ttl=300,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_list_students(database_target: str, course_id: int) -> list[dict]:
-    return AttendanceRepository(database_target).list_students_for_course(course_id)
+    return _get_repository(database_target).list_students_for_course(course_id)
 
 
 @st.cache_data(
-    ttl=15,
+    ttl=300,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_list_schedules(database_target: str, course_id: int) -> list[dict]:
-    return AttendanceRepository(database_target).list_schedules_for_course(course_id)
+    return _get_repository(database_target).list_schedules_for_course(course_id)
 
 
 @st.cache_data(
-    ttl=10,
+    ttl=15,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
@@ -832,14 +842,14 @@ def _cached_list_course_attendance(
     course_id: int,
     limit: int,
 ) -> list[dict]:
-    return AttendanceRepository(database_target).list_course_attendance(
+    return _get_repository(database_target).list_course_attendance(
         course_id=course_id,
         limit=limit,
     )
 
 
 @st.cache_data(
-    ttl=10,
+    ttl=15,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
@@ -850,7 +860,7 @@ def _cached_list_student_attendance(
     student_id: int,
     limit: int,
 ) -> list[dict]:
-    return AttendanceRepository(database_target).list_attendance(
+    return _get_repository(database_target).list_attendance(
         course_id=course_id,
         student_id=student_id,
         limit=limit,
@@ -858,19 +868,36 @@ def _cached_list_student_attendance(
 
 
 @st.cache_data(
-    ttl=10,
+    ttl=15,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_attendance_counts(database_target: str, course_id: int) -> dict[int, int]:
-    return AttendanceRepository(database_target).count_attendance_by_student_for_course(
+    return _get_repository(database_target).count_attendance_by_student_for_course(
         course_id=course_id
     )
 
 
 @st.cache_data(
-    ttl=5,
+    ttl=15,
+    max_entries=256,
+    show_spinner=False,
+    refresh_mode="background",
+)
+def _cached_manager_today_snapshot(
+    database_target: str,
+    course_ids: tuple[int, ...],
+    attendance_date: str,
+) -> dict:
+    return _get_repository(database_target).get_manager_today_snapshot(
+        course_ids=list(course_ids),
+        attendance_date=attendance_date,
+    )
+
+
+@st.cache_data(
+    ttl=3,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
@@ -882,7 +909,7 @@ def _cached_attendance_exists(
     schedule_id: int,
     attendance_date: str,
 ) -> bool:
-    return AttendanceRepository(database_target).attendance_exists(
+    return _get_repository(database_target).attendance_exists(
         course_id=course_id,
         student_id=student_id,
         schedule_id=schedule_id,
@@ -891,7 +918,7 @@ def _cached_attendance_exists(
 
 
 @st.cache_data(
-    ttl=10,
+    ttl=30,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
@@ -901,14 +928,14 @@ def _cached_list_proxy_alerts(
     course_id: int,
     limit: int,
 ) -> list[dict]:
-    return AttendanceRepository(database_target).list_proxy_alerts(
+    return _get_repository(database_target).list_proxy_alerts(
         course_id=course_id,
         limit=limit,
     )
 
 
 @st.cache_data(
-    ttl=10,
+    ttl=30,
     max_entries=512,
     show_spinner=False,
     refresh_mode="background",
@@ -918,56 +945,56 @@ def _cached_list_device_audit_events(
     course_id: int,
     limit: int,
 ) -> list[dict]:
-    return AttendanceRepository(database_target).list_device_audit_events(
+    return _get_repository(database_target).list_device_audit_events(
         course_id=course_id,
         limit=limit,
     )
 
 
 @st.cache_data(
-    ttl=30,
+    ttl=60,
     max_entries=128,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_report_attendance(database_target: str, course_id: int) -> list[dict]:
-    return AttendanceRepository(database_target).list_course_attendance_for_report(
+    return _get_repository(database_target).list_course_attendance_for_report(
         course_id=course_id
     )
 
 
 @st.cache_data(
-    ttl=30,
+    ttl=60,
     max_entries=128,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_report_security_alerts(database_target: str, course_id: int) -> list[dict]:
-    return AttendanceRepository(database_target).list_proxy_alerts_for_report(
+    return _get_repository(database_target).list_proxy_alerts_for_report(
         course_id=course_id
     )
 
 
 @st.cache_data(
-    ttl=30,
+    ttl=60,
     max_entries=128,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_report_device_audit(database_target: str, course_id: int) -> list[dict]:
-    return AttendanceRepository(database_target).list_device_audit_events_for_report(
+    return _get_repository(database_target).list_device_audit_events_for_report(
         course_id=course_id
     )
 
 
 @st.cache_data(
-    ttl=30,
+    ttl=60,
     max_entries=128,
     show_spinner=False,
     refresh_mode="background",
 )
 def _cached_report_otp_activity(database_target: str, course_id: int) -> list[dict]:
-    return AttendanceRepository(database_target).list_otp_activity_for_report(course_id=course_id)
+    return _get_repository(database_target).list_otp_activity_for_report(course_id=course_id)
 
 
 @st.cache_data(
@@ -1002,7 +1029,7 @@ def _cached_course_report(
 
 
 @st.cache_data(
-    ttl=30,
+    ttl=60,
     max_entries=128,
     show_spinner=False,
     refresh_mode="background",
@@ -1016,7 +1043,7 @@ def _cached_eligibility_rows(
     schedules: list[dict],
     attendance_counts: dict[int, int],
 ) -> list[dict[str, object]]:
-    repo = AttendanceRepository(database_target)
+    repo = _get_repository(database_target)
     settings = SimpleNamespace(app_timezone=timezone_name)
     rows = []
     for student in students:
@@ -1043,8 +1070,48 @@ def _cached_eligibility_rows(
     return rows
 
 
-def _invalidate_read_caches() -> None:
-    st.cache_data.clear()
+def _invalidate_read_caches(
+    *,
+    courses: bool = False,
+    roster: bool = False,
+    schedules: bool = False,
+    attendance: bool = False,
+    security: bool = False,
+    reports: bool = False,
+    all_data: bool = False,
+) -> None:
+    courses = courses or all_data
+    roster = roster or all_data
+    schedules = schedules or all_data
+    attendance = attendance or all_data
+    security = security or all_data
+    reports = reports or all_data
+
+    if courses:
+        _cached_list_courses.clear()
+        _cached_get_course.clear()
+    if roster:
+        _cached_list_students.clear()
+        _cached_get_student.clear()
+    if schedules:
+        _cached_list_schedules.clear()
+    if attendance:
+        _cached_list_course_attendance.clear()
+        _cached_list_student_attendance.clear()
+        _cached_attendance_counts.clear()
+        _cached_attendance_exists.clear()
+    if roster or schedules or attendance:
+        _cached_manager_today_snapshot.clear()
+    if security:
+        _cached_list_proxy_alerts.clear()
+        _cached_list_device_audit_events.clear()
+    if reports:
+        _cached_report_attendance.clear()
+        _cached_report_security_alerts.clear()
+        _cached_report_device_audit.clear()
+        _cached_report_otp_activity.clear()
+        _cached_eligibility_rows.clear()
+        _cached_course_report.clear()
 
 
 def main() -> None:
@@ -1057,9 +1124,8 @@ def main() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
 
     settings = load_settings(_safe_secrets())
-    repo = AttendanceRepository(settings.database_target)
     try:
-        repo.init_schema()
+        repo = _get_repository(settings.database_target)
     except RuntimeError as error:
         st.error(str(error))
         st.stop()
@@ -1182,6 +1248,7 @@ def _render_manager_workspace(repo: AttendanceRepository, settings) -> None:
         with exit_col:
             if st.button("Exit", key="manager_exit", width="stretch"):
                 st.session_state["manager_auth"] = None
+                st.session_state["manager_prepared_report"] = None
                 st.session_state["active_role"] = None
                 st.rerun()
 
@@ -1204,21 +1271,14 @@ def _render_manager_workspace(repo: AttendanceRepository, settings) -> None:
 
 def _render_manager_today(repo: AttendanceRepository, settings, courses) -> None:
     now = now_in_app_timezone(settings)
-    sessions = _today_sessions(repo, settings, courses)
-    all_students = sum(
-        len(_cached_list_students(settings.database_target, int(course["id"])))
-        for course in courses
+    dashboard = _cached_manager_today_snapshot(
+        settings.database_target,
+        tuple(int(course["id"]) for course in courses),
+        now.date().isoformat(),
     )
-    records_today = 0
-    for course in courses:
-        records_today += sum(
-            str(row["attendance_date"]) == now.date().isoformat()
-            for row in _cached_list_course_attendance(
-                settings.database_target,
-                int(course["id"]),
-                10000,
-            )
-        )
+    sessions = _today_sessions(settings, courses, dashboard)
+    all_students = sum(dashboard["student_counts"].values())
+    records_today = int(dashboard["records_today"])
     live_count = sum(row["status"] == "Live" for row in sessions)
     upcoming_count = sum(row["status"] == "Upcoming" for row in sessions)
 
@@ -1409,7 +1469,7 @@ def _render_manager_courses(repo: AttendanceRepository, settings, courses, cours
             if editing is None and settings.app_env == "development" and not courses:
                 if st.button("Create demo course", key="seed_demo", width="stretch"):
                     if seed_demo_data(repo, settings, latitude=24.7136, longitude=46.6753):
-                        _invalidate_read_caches()
+                        _invalidate_read_caches(all_data=True)
                         st.session_state["manager_notice"] = "Demo course created."
                         st.session_state["course_editor_mode"] = "existing"
                         st.rerun()
@@ -1490,7 +1550,7 @@ def _render_manager_students(repo: AttendanceRepository, settings, course) -> No
                         phone=phone.strip(),
                         created_at=now_in_app_timezone(settings).isoformat(),
                     )
-                    _invalidate_read_caches()
+                    _invalidate_read_caches(roster=True, reports=True)
                     st.session_state["manager_notice"] = f"{full_name.strip()} added to {course['code']}."
                     st.rerun()
                 except Exception as error:
@@ -1505,6 +1565,8 @@ def _render_manager_students(repo: AttendanceRepository, settings, course) -> No
         )
         if uploaded is not None:
             try:
+                from attendance_app.roster import parse_roster_file
+
                 roster_rows = parse_roster_file(uploaded.name, uploaded.getvalue())
                 st.caption(f"{len(roster_rows)} valid students")
                 if st.button("Replace roster", key=f"sync_roster_{course['id']}", width="stretch"):
@@ -1513,7 +1575,7 @@ def _render_manager_students(repo: AttendanceRepository, settings, course) -> No
                         roster_rows=roster_rows,
                         created_at=now_in_app_timezone(settings).isoformat(),
                     )
-                    _invalidate_read_caches()
+                    _invalidate_read_caches(roster=True, reports=True)
                     st.session_state["manager_notice"] = f"Roster replaced for {course['code']}."
                     st.rerun()
             except Exception as error:
@@ -1642,7 +1704,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                     alert_id=alert_labels[selected_alert],
                     resolved_at=now_in_app_timezone(settings).isoformat(),
                 )
-                _invalidate_read_caches()
+                _invalidate_read_caches(security=True, reports=True)
                 st.rerun(scope="fragment")
         else:
             st.info("No open incidents.")
@@ -1689,7 +1751,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                             actor_identifier=actor_identifier,
                             reviewed_at=now_in_app_timezone(settings).isoformat(),
                         )
-                        _invalidate_read_caches()
+                        _invalidate_read_caches(roster=True, security=True, reports=True)
                         st.session_state["manager_notice"] = "Registered device approved."
                         st.rerun()
                     except Exception as error:
@@ -1700,7 +1762,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                     actor_identifier=actor_identifier,
                     reviewed_at=now_in_app_timezone(settings).isoformat(),
                 ):
-                    _invalidate_read_caches()
+                    _invalidate_read_caches(security=True)
                     st.session_state["manager_notice"] = "Device enrollment rejected."
                     st.rerun()
         else:
@@ -1730,7 +1792,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                             )
                         ),
                     )
-                    _invalidate_read_caches()
+                    _invalidate_read_caches(roster=True, security=True, reports=True)
                     st.session_state["manager_notice"] = "Student device reset."
                     st.rerun()
                 except Exception as error:
@@ -1782,13 +1844,6 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
     course_id = int(course["id"])
     students = _cached_list_students(settings.database_target, course_id)
     schedules = _cached_list_schedules(settings.database_target, course_id)
-    attendance_records = _cached_report_attendance(
-        settings.database_target,
-        course_id,
-    )
-    security_alerts = _cached_report_security_alerts(settings.database_target, course_id)
-    device_audit_events = _cached_report_device_audit(settings.database_target, course_id)
-    otp_activity = _cached_report_otp_activity(settings.database_target, course_id)
     attendance_counts = _cached_attendance_counts(settings.database_target, course_id)
     eligibility_rows = _cached_eligibility_rows(
         database_target=settings.database_target,
@@ -1814,25 +1869,58 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
             st.dataframe(eligibility_rows, width="stretch", hide_index=True, lazy=True)
         else:
             _empty_state("No students are available for reporting.")
-        report_bytes = _cached_course_report(
-            course=course,
-            students=students,
-            schedules=schedules,
-            attendance_records=attendance_records,
-            eligibility_rows=eligibility_rows,
-            security_alerts=security_alerts,
-            device_audit_events=device_audit_events,
-            otp_activity=otp_activity,
-            timezone_name=settings.app_timezone,
-        )
-        st.download_button(
-            "Download complete Excel report",
-            data=report_bytes,
-            file_name=f"{course['code']}_complete_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        prepared_report = st.session_state.get("manager_prepared_report")
+        if prepared_report and int(prepared_report.get("course_id", 0)) != course_id:
+            prepared_report = None
+            st.session_state["manager_prepared_report"] = None
+        if st.button(
+            "Refresh Excel report" if prepared_report is not None else "Prepare Excel report",
+            type="primary",
             width="stretch",
-            on_click="ignore",
-        )
+        ):
+            attendance_records = _cached_report_attendance(
+                settings.database_target,
+                course_id,
+            )
+            security_alerts = _cached_report_security_alerts(
+                settings.database_target,
+                course_id,
+            )
+            device_audit_events = _cached_report_device_audit(
+                settings.database_target,
+                course_id,
+            )
+            otp_activity = _cached_report_otp_activity(
+                settings.database_target,
+                course_id,
+            )
+            prepared_report = {
+                "course_id": course_id,
+                "course_code": str(course["code"]),
+                "prepared_at": now_in_app_timezone(settings).strftime("%Y-%m-%d %H:%M"),
+                "data": _cached_course_report(
+                    course=course,
+                    students=students,
+                    schedules=schedules,
+                    attendance_records=attendance_records,
+                    eligibility_rows=eligibility_rows,
+                    security_alerts=security_alerts,
+                    device_audit_events=device_audit_events,
+                    otp_activity=otp_activity,
+                    timezone_name=settings.app_timezone,
+                ),
+            }
+            st.session_state["manager_prepared_report"] = prepared_report
+        if prepared_report is not None:
+            st.caption(f"Prepared {prepared_report['prepared_at']} · refresh for latest records")
+            st.download_button(
+                "Download complete Excel report",
+                data=prepared_report["data"],
+                file_name=f"{prepared_report['course_code']}_complete_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch",
+                on_click="ignore",
+            )
     with restore_col:
         _render_section_title("Restore", "Excel workbook")
         restore_file = st.file_uploader(
@@ -1845,13 +1933,15 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
             "Restore workbook", key=f"restore_button_{course['id']}", width="stretch"
         ):
             try:
+                from attendance_app.report_importer import import_attendance_report_bytes
+
                 result = import_attendance_report_bytes(
                     repo=repo,
                     settings=settings,
                     source_name=restore_file.name,
                     content=restore_file.getvalue(),
                 )
-                _invalidate_read_caches()
+                _invalidate_read_caches(all_data=True)
                 st.session_state["pending_manager_course_code"] = str(result["course_code"])
                 st.session_state["manager_notice"] = f"{result['course_code']} restored."
                 st.rerun()
@@ -1969,19 +2059,14 @@ def _render_student_access(repo: AttendanceRepository, settings) -> None:
                     _reset_student_access(clear_id=True)
                     st.rerun(scope="fragment")
             elif access_context["device_enrolled"]:
-                course = repo.get_course(int(access_context["course_id"]))
-                student = repo.get_student(int(access_context["student_id"]))
-                if course is None or student is None:
-                    st.error("تعذر فتح بوابة الطالب. ابدأ من جديد.")
-                else:
-                    _start_student_session(
-                        settings,
-                        course,
-                        student,
-                        st.session_state.get("student_passkey_verified"),
-                        access_context,
-                    )
-                    st.rerun()
+                _start_student_session(
+                    settings,
+                    {"id": int(access_context["course_id"])},
+                    {"id": int(access_context["student_id"])},
+                    st.session_state.get("student_passkey_verified"),
+                    access_context,
+                )
+                st.rerun()
             elif not st.session_state.get("student_otp_requested", False):
                 _render_student_credential_capability(access_context)
                 if st.button("إرسال رمز التحقق", key="request_student_otp", type="primary", width="stretch"):
@@ -2057,15 +2142,6 @@ def _render_student_portal(repo: AttendanceRepository, settings) -> None:
 @st.fragment
 def _render_student_check_in(repo, settings, course, student, active_schedule) -> None:
     auth = st.session_state.get("student_auth") or {}
-    try:
-        course, student, active_schedule = resolve_active_student_session(
-            repo,
-            settings,
-            auth=auth,
-        )
-    except ValueError:
-        _expire_student_session()
-        st.rerun()
     _render_page_head(
         "نافذة الحضور",
         "تسجيل الحضور",
@@ -2378,14 +2454,15 @@ def _render_course_strip(repo: AttendanceRepository, course) -> None:
     course_id = int(course["id"])
     students = _cached_list_students(repo.database_target, course_id)
     schedules = _cached_list_schedules(repo.database_target, course_id)
-    records = _cached_list_course_attendance(repo.database_target, course_id, 10000)
+    attendance_counts = _cached_attendance_counts(repo.database_target, course_id)
+    record_count = sum(attendance_counts.values())
     st.markdown(
         f"""
         <div class="cp-course-strip">
             <div><strong>{escape(str(course['code']))} · {escape(str(course['title']))}</strong><br>
             <span>{escape(str(course['start_date']))} — {escape(str(course['end_date'] or course['start_date']))}</span></div>
             <div class="cp-course-tags">
-                <b>{len(students)} students</b><b>{len(schedules)} windows</b><b>{len(records)} stamps</b>
+                <b>{len(students)} students</b><b>{len(schedules)} windows</b><b>{record_count} stamps</b>
             </div>
         </div>
         """,
@@ -2414,29 +2491,24 @@ def _render_week_board(settings, schedules) -> None:
     st.markdown(f'<div class="cp-week">{"".join(day_cards)}</div>', unsafe_allow_html=True)
 
 
-def _today_sessions(repo, settings, courses) -> list[dict]:
+def _today_sessions(settings, courses, dashboard) -> list[dict]:
     now = now_in_app_timezone(settings)
     rows = []
     for course in courses:
         if not _course_is_active(course, now.date()):
             continue
         course_id = int(course["id"])
-        roster = _cached_list_students(settings.database_target, course_id)
-        attendance = _cached_list_course_attendance(
-            settings.database_target,
-            course_id,
-            10000,
-        )
-        for schedule in _cached_list_schedules(settings.database_target, course_id):
+        for schedule in dashboard["schedules_by_course"].get(course_id, []):
             if int(schedule["weekday"]) != now.weekday():
                 continue
             start = parse_hhmm(str(schedule["start_time"]))
             end = parse_hhmm(str(schedule["end_time"]))
             status = "Live" if start <= now.time() <= end else "Upcoming" if now.time() < start else "Complete"
-            checked_in = sum(
-                str(row["attendance_date"]) == now.date().isoformat()
-                and str(row["schedule_label"]) == str(schedule["label"])
-                for row in attendance
+            checked_in = int(
+                dashboard["attendance_counts"].get(
+                    (course_id, int(schedule["id"])),
+                    0,
+                )
             )
             rows.append(
                 {
@@ -2447,7 +2519,7 @@ def _today_sessions(repo, settings, courses) -> list[dict]:
                     "start": str(schedule["start_time"]),
                     "end": str(schedule["end_time"]),
                     "checked_in": checked_in,
-                    "roster": len(roster),
+                    "roster": int(dashboard["student_counts"].get(course_id, 0)),
                 }
             )
     status_order = {"Live": 0, "Upcoming": 1, "Complete": 2}
@@ -2533,7 +2605,7 @@ def _save_timetable(repo, settings, course_id: int, edited_rows) -> None:
             schedule_rows=schedule_rows,
             created_at=now_in_app_timezone(settings).isoformat(),
         )
-        _invalidate_read_caches()
+        _invalidate_read_caches(schedules=True, reports=True)
         st.session_state[f"show_templates_{course_id}"] = False
         st.session_state[f"timetable_version_{course_id}"] = st.session_state.get(
             f"timetable_version_{course_id}", 0
@@ -2571,7 +2643,7 @@ def _create_live_test_window(repo, settings, course_id: int) -> None:
             end_time=ends_at.strftime("%H:%M"),
             created_at=now.isoformat(),
         )
-        _invalidate_read_caches()
+        _invalidate_read_caches(schedules=True, reports=True)
         st.session_state["manager_notice"] = "Test window opened."
         st.rerun()
     except Exception as error:
@@ -2632,7 +2704,7 @@ def _save_course(
                 radius_m=radius_m,
                 absence_limit_pct=absence_limit_pct,
             )
-        _invalidate_read_caches()
+        _invalidate_read_caches(courses=True, reports=True)
         st.session_state["pending_manager_course_code"] = normalized_code
         st.session_state["course_editor_mode"] = "existing"
         st.session_state["loaded_course_location"] = None
@@ -2721,8 +2793,7 @@ def _load_student_access_candidates(repo: AttendanceRepository, university_id: s
     if not contexts:
         st.error(_student_message("Student ID was not found in any course roster."))
         return
-    student_id = int(contexts[0]["student_id"])
-    device_enrolled = repo.get_registered_device_for_student(student_id) is not None
+    device_enrolled = contexts[0].get("registered_device_id") is not None
     st.session_state["student_access_candidates"] = [
         {
             "course_id": int(context["id"]),
@@ -3018,7 +3089,7 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
         )
         st.session_state["student_pending_enrollment_id"] = pending_id
         st.session_state["student_browser_key_operation"] = None
-        _invalidate_read_caches()
+        _invalidate_read_caches(security=True)
         st.rerun(scope="fragment")
     except Exception as error:
         st.session_state["student_browser_key_error"] = str(error)
@@ -3135,12 +3206,14 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
             expected_rp_id=operation["rp_id"],
             expected_origin=operation["origin"],
         )
-        course = repo.get_course(int(context["course_id"]))
-        student = repo.get_student(int(context["student_id"]))
-        if course is None or student is None:
-            raise ValueError("Student access context is no longer valid.")
-        _invalidate_read_caches()
-        _start_student_session(settings, course, student, verified_device, context)
+        _invalidate_read_caches(roster=True, security=True, reports=True)
+        _start_student_session(
+            settings,
+            {"id": int(context["course_id"])},
+            {"id": int(context["student_id"])},
+            verified_device,
+            context,
+        )
         st.rerun()
     except Exception as error:
         st.session_state["student_passkey_error"] = str(error)
@@ -3250,7 +3323,7 @@ def _handle_stamp_location(payload, repo, settings, course, student, auth: dict)
         "message": result.message,
     }
     if result.success:
-        _invalidate_read_caches()
+        _invalidate_read_caches(attendance=True, reports=True)
     st.rerun(scope="fragment")
 
 
@@ -3338,6 +3411,7 @@ def _init_session_state() -> None:
         "manager_section": MANAGER_SECTIONS[0],
         "manager_course_code": "No courses",
         "pending_manager_course_code": None,
+        "manager_prepared_report": None,
         "course_editor_mode": "existing",
         "course_latitude": 0.0,
         "course_longitude": 0.0,

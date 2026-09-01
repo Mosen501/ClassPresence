@@ -112,6 +112,9 @@ Copy `.env.example` values into your shell environment or deployment platform.
 - The manager location picker uses OpenStreetMap tiles, so internet access helps the map render during local testing.
 - GPS accuracy can drift indoors. The app enforces the configured radius, but device-reported accuracy should still be reviewed during rollout.
 - The first run creates the database schema automatically for either SQLite or PostgreSQL.
+- PostgreSQL connections are pooled and schema migrations run once per deployed schema version. Host the database in the same geographic region as the Streamlit app to minimize query latency.
+- Stable course, roster, and timetable data stay cached between interactions. Attendance and security writes invalidate only the affected views.
+- Complete Excel workbooks are generated only after the manager selects **Prepare Excel report**, keeping the Reports page responsive.
 - A demo seed button is available inside the manager console to quickly populate `MAT1116`.
 - Roster uploads currently support `.xlsx` and `.csv`.
 - In local development, manager credentials can live in `.streamlit/secrets.toml`. In production, set them in deployment secrets instead of the repository.

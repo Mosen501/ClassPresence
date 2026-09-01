@@ -5,13 +5,30 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import _cached_course_report, _cached_list_courses
+from app import (
+    _cached_course_report,
+    _cached_list_courses,
+    _get_repository,
+    _invalidate_read_caches,
+)
+from attendance_app.database import AttendanceRepository
 
 
 class PerformanceCacheTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         _cached_list_courses.clear()
         _cached_course_report.clear()
+        _get_repository.clear()
+
+    def test_repository_and_schema_initialization_are_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "attendance.db")
+            with patch.object(AttendanceRepository, "init_schema") as initialize:
+                first = _get_repository(database_path)
+                second = _get_repository(database_path)
+
+        self.assertIs(first, second)
+        initialize.assert_called_once_with()
 
     def test_course_list_query_is_reused(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -21,6 +38,18 @@ class PerformanceCacheTestCase(unittest.TestCase):
                 self.assertEqual(_cached_list_courses(database_path), [])
 
             query.assert_called_once()
+
+    def test_attendance_write_keeps_stable_course_cache_warm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "attendance.db")
+            with patch("app.AttendanceRepository.list_courses", return_value=[]) as query:
+                self.assertEqual(_cached_list_courses(database_path), [])
+                _invalidate_read_caches(attendance=True, reports=True)
+                self.assertEqual(_cached_list_courses(database_path), [])
+                _invalidate_read_caches(courses=True)
+                self.assertEqual(_cached_list_courses(database_path), [])
+
+        self.assertEqual(query.call_count, 2)
 
     def test_identical_report_is_built_once(self) -> None:
         course = {
