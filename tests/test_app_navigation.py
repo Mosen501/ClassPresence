@@ -19,7 +19,7 @@ from app import (
     _student_message,
 )
 from attendance_app.components import geo_capture, passkey_action
-from attendance_app.database import AttendanceRepository
+from attendance_app.database import AttendanceRepository, DatabaseUnavailableError
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 PASSKEY_COMPONENT_PATH = (
@@ -39,6 +39,40 @@ GEO_COMPONENT_PATH = (
 
 
 class AppNavigationTestCase(unittest.TestCase):
+    def test_database_outage_shows_retry_panel_instead_of_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "attendance.db")
+            with patch.dict(
+                os.environ,
+                {
+                    "ATTENDANCE_DB_PATH": database_path,
+                    "APP_ENV": "development",
+                },
+                clear=False,
+            ):
+                app = AppTest.from_file(str(APP_PATH)).run(timeout=30)
+                app.session_state["active_role"] = "manager"
+                app.session_state["manager_auth"] = {"username": "manager"}
+
+                with patch.object(
+                    AttendanceRepository,
+                    "list_courses",
+                    side_effect=DatabaseUnavailableError("temporary outage"),
+                ):
+                    app.run(timeout=30)
+
+                self.assertEqual(len(app.exception), 0)
+                self.assertIn(
+                    "Retry database connection",
+                    [button.label for button in app.button],
+                )
+                self.assertTrue(
+                    any(
+                        "database connection was briefly interrupted" in error.value
+                        for error in app.error
+                    )
+                )
+
     def test_student_components_keep_warm_deployment_compatible_signatures(self) -> None:
         self.assertNotIn("locale", signature(geo_capture).parameters)
         self.assertNotIn("locale", signature(passkey_action).parameters)

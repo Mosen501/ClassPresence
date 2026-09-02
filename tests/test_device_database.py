@@ -3,10 +3,10 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
+from contextlib import closing, contextmanager
 from unittest.mock import patch
 
-from attendance_app.database import AttendanceRepository
+from attendance_app.database import AttendanceRepository, DatabaseUnavailableError
 
 
 class DeviceDatabaseTestCase(unittest.TestCase):
@@ -130,6 +130,74 @@ class DeviceDatabaseTestCase(unittest.TestCase):
         pool.wait.assert_called_once_with(timeout=10)
         self.assertEqual(pool_factory.call_args.kwargs["min_size"], 1)
         self.assertEqual(pool_factory.call_args.kwargs["max_size"], 8)
+        self.assertIs(
+            pool_factory.call_args.kwargs["check"],
+            pool_factory.check_connection,
+        )
+        self.assertEqual(pool_factory.call_args.kwargs["reconnect_timeout"], 10)
+
+        repo.check_connections()
+        pool.check.assert_called_once_with()
+
+    def test_read_retries_once_after_a_temporary_database_failure(self) -> None:
+        class SuccessfulConnection:
+            def execute(self, query, parameters):
+                del query, parameters
+                return self
+
+            def fetchall(self):
+                return [{"id": 7, "code": "RECOVERED"}]
+
+        @contextmanager
+        def failed_checkout():
+            raise DatabaseUnavailableError("temporary outage")
+            yield  # pragma: no cover
+
+        @contextmanager
+        def successful_checkout():
+            yield SuccessfulConnection()
+
+        with patch.object(
+            self.repo,
+            "_connection",
+            side_effect=[failed_checkout(), successful_checkout()],
+        ) as connection:
+            rows = self.repo._fetchall("SELECT * FROM courses")
+
+        self.assertEqual(rows, [{"id": 7, "code": "RECOVERED"}])
+        self.assertEqual(connection.call_count, 2)
+
+    def test_read_reports_database_failure_after_second_attempt(self) -> None:
+        @contextmanager
+        def failed_checkout():
+            raise DatabaseUnavailableError("temporary outage")
+            yield  # pragma: no cover
+
+        with patch.object(
+            self.repo,
+            "_connection",
+            side_effect=[failed_checkout(), failed_checkout()],
+        ) as connection:
+            with self.assertRaises(DatabaseUnavailableError):
+                self.repo._fetchone("SELECT * FROM courses WHERE id = ?", (1,))
+
+        self.assertEqual(connection.call_count, 2)
+
+    def test_connection_translates_transient_driver_errors(self) -> None:
+        @contextmanager
+        def failed_checkout():
+            raise OSError("connection closed")
+            yield  # pragma: no cover
+
+        class FailingPool:
+            def connection(self):
+                return failed_checkout()
+
+        self.repo._pool = FailingPool()
+        with patch.object(self.repo, "_is_transient_database_error", return_value=True):
+            with self.assertRaises(DatabaseUnavailableError):
+                with self.repo._connection():
+                    pass
 
     def test_existing_database_migrates_lecture_security_columns(self) -> None:
         database_path = f"{self.temp_dir.name}/legacy.db"

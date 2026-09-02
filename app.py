@@ -18,7 +18,10 @@ from attendance_app import services as services_module
 
 # Streamlit Cloud may rerun app.py while imported local modules still come from
 # the previous deployment. Refresh dependencies before importing newly added APIs.
-if not hasattr(database_module.AttendanceRepository, "list_location_attempt_events"):
+if not hasattr(database_module, "DatabaseUnavailableError") or not hasattr(
+    database_module.AttendanceRepository,
+    "list_location_attempt_events",
+):
     database_module = reload(database_module)
 if not hasattr(components_module, "manager_geo_capture"):
     components_module = reload(components_module)
@@ -81,6 +84,8 @@ DATA_MANAGEMENT_REPOSITORY_METHODS = (
     "anonymize_location_coordinates_before",
     "apply_course_location_calibration",
     "list_course_location_calibrations",
+    "close",
+    "check_connections",
 )
 
 # Streamlit can rerun app.py while retaining an imported dependency from the
@@ -91,6 +96,7 @@ if not all(
 ):
     database_module = reload(database_module)
 AttendanceRepository = database_module.AttendanceRepository
+DatabaseUnavailableError = database_module.DatabaseUnavailableError
 SCHEMA_VERSION = database_module.SCHEMA_VERSION
 
 
@@ -1302,6 +1308,27 @@ def _invalidate_read_caches(
         _cached_course_report.clear()
 
 
+def _render_database_recovery(repo: AttendanceRepository | None = None) -> None:
+    st.error(
+        "تعذر الاتصال بقاعدة البيانات مؤقتاً. أعد المحاولة. / "
+        "The database connection was briefly interrupted. Please retry."
+    )
+    st.caption(
+        "If you were saving a change, verify its result before submitting it again. "
+        "If retry still fails, wait 30 seconds and try once more."
+    )
+    if st.button("Retry database connection", type="primary", key="database-retry"):
+        if repo is not None:
+            try:
+                repo.check_connections()
+            except Exception:
+                pass
+        else:
+            _get_repository.clear()
+        _invalidate_read_caches(all_data=True)
+        st.rerun()
+
+
 def main() -> None:
     st.set_page_config(
         page_title="ClassPresence",
@@ -1312,21 +1339,29 @@ def main() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
 
     settings = load_settings(_safe_secrets())
+    repo = None
     try:
         repo = _get_repository(settings.database_target, SCHEMA_VERSION)
         repo = _refresh_repository_after_deployment(repo, settings.database_target)
+    except DatabaseUnavailableError:
+        _render_database_recovery()
+        st.stop()
     except RuntimeError as error:
         st.error(str(error))
         st.stop()
 
     _init_session_state()
     role = st.session_state["active_role"]
-    if role is None:
-        _render_role_home(settings)
-    elif role == "manager":
-        _render_manager_entry(repo, settings)
-    else:
-        _render_student_entry(repo, settings)
+    try:
+        if role is None:
+            _render_role_home(settings)
+        elif role == "manager":
+            _render_manager_entry(repo, settings)
+        else:
+            _render_student_entry(repo, settings)
+    except DatabaseUnavailableError:
+        _render_database_recovery(repo)
+        st.stop()
 
 
 def _render_role_home(settings) -> None:

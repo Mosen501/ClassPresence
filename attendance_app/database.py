@@ -15,13 +15,19 @@ except ImportError:  # pragma: no cover - sqlite-only local/test environments
     dict_row = None
 
 try:  # pragma: no cover - exercised in deployments with Postgres configured
-    from psycopg_pool import ConnectionPool
+    from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - sqlite-only local/test environments
     ConnectionPool = None
+    PoolTimeout = None
 
 
 Record = dict[str, Any]
 SCHEMA_VERSION = "2026-09-01-3"
+
+
+class DatabaseUnavailableError(RuntimeError):
+    """Raised when PostgreSQL is temporarily unreachable or drops a connection."""
+
 
 DATA_RESET_ACTIONS = frozenset(
     {
@@ -478,9 +484,11 @@ class AttendanceRepository:
             min_size=1,
             max_size=8,
             kwargs={"row_factory": dict_row, "connect_timeout": 10},
+            check=ConnectionPool.check_connection,
             timeout=10,
             max_idle=300,
             max_lifetime=1800,
+            reconnect_timeout=10,
             name="classpresence",
             open=True,
         )
@@ -488,11 +496,19 @@ class AttendanceRepository:
             pool.wait(timeout=10)
         except Exception as error:
             pool.close()
-            raise RuntimeError(
-                "Could not initialize the PostgreSQL connection pool. Check the database URL "
-                "and confirm the database is reachable from the deployment region."
+            raise DatabaseUnavailableError(
+                "The database is temporarily unavailable. Check the database service and retry."
             ) from error
         return pool
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
+
+    def check_connections(self) -> None:
+        if self._pool is not None:
+            self._pool.check()
 
     def init_schema(self) -> None:
         if self.backend == "sqlite" and self.db_path is not None and str(self.db_path) != ":memory:":
@@ -2710,29 +2726,46 @@ class AttendanceRepository:
                 row_factory=dict_row,
             )
         except psycopg.OperationalError as error:
-            raise RuntimeError(
-                "Could not connect to PostgreSQL. Check `ATTENDANCE_DB_URL` in Streamlit secrets, "
-                "make sure it is a full `postgresql://...` URL, add `sslmode=require`, and "
-                "URL-encode any special characters in the username or password such as `@`, `:`, "
-                "`/`, `?`, or `#`."
+            raise DatabaseUnavailableError(
+                "The database is temporarily unavailable. Check the database service and retry."
             ) from error
 
     @contextmanager
     def _connection(self):
         if self._pool is not None:
-            with self._pool.connection() as connection:
-                yield connection
+            try:
+                with self._pool.connection() as connection:
+                    yield connection
+            except Exception as error:
+                if self._is_transient_database_error(error):
+                    raise DatabaseUnavailableError(
+                        "The database connection was interrupted. Please retry."
+                    ) from error
+                raise
             return
 
         connection = self._connect()
         try:
             yield connection
             connection.commit()
-        except Exception:
+        except Exception as error:
             connection.rollback()
+            if self._is_transient_database_error(error):
+                raise DatabaseUnavailableError(
+                    "The database connection was interrupted. Please retry."
+                ) from error
             raise
         finally:
             connection.close()
+
+    def _is_transient_database_error(self, error: Exception) -> bool:
+        if self.backend != "postgres":
+            return False
+        if PoolTimeout is not None and isinstance(error, PoolTimeout):
+            return True
+        if psycopg is None:
+            return False
+        return isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError))
 
     def _schema_statements(self) -> tuple[str, ...]:
         if self.backend == "postgres":
@@ -2947,15 +2980,31 @@ class AttendanceRepository:
         )
 
     def _fetchone(self, query: str, parameters: Iterable[Any] = ()) -> Record | None:
-        with self._connection() as connection:
-            row = connection.execute(self._sql(query), tuple(parameters)).fetchone()
+        sql = self._sql(query)
+        values = tuple(parameters)
+        for attempt in range(2):
+            try:
+                with self._connection() as connection:
+                    row = connection.execute(sql, values).fetchone()
+                break
+            except DatabaseUnavailableError:
+                if attempt == 1:
+                    raise
         if row is None:
             return None
         return dict(row)
 
     def _fetchall(self, query: str, parameters: Iterable[Any] = ()) -> list[Record]:
-        with self._connection() as connection:
-            rows = connection.execute(self._sql(query), tuple(parameters)).fetchall()
+        sql = self._sql(query)
+        values = tuple(parameters)
+        for attempt in range(2):
+            try:
+                with self._connection() as connection:
+                    rows = connection.execute(sql, values).fetchall()
+                break
+            except DatabaseUnavailableError:
+                if attempt == 1:
+                    raise
         return [dict(row) for row in rows]
 
     def _execute(
