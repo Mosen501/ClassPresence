@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from attendance_app.config import Settings
-from attendance_app.database import AttendanceRepository
+from attendance_app.database import BROWSER_KEY_RECOVERY_REASON, AttendanceRepository
 from attendance_app.passkeys import RegisteredPasskey, VerifiedPasskey, hash_device_token
 from attendance_app.services import (
     StudentAccessContext,
@@ -22,6 +22,7 @@ from attendance_app.services import (
     register_student_passkey,
     request_login_code_for_access_context,
     request_student_browser_key_enrollment,
+    request_student_browser_key_recovery,
     reset_student_device,
     resolve_active_student_session,
     resolve_registered_student_access_context,
@@ -491,6 +492,148 @@ class ServicesTestCase(unittest.TestCase):
         audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
         self.assertEqual(audit[0]["event_type"], "manager_device_approved")
         self.assertEqual(audit[0]["actor_identifier"], "manager_user")
+
+    def test_missing_browser_key_can_be_recovered_on_same_registered_device(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        device_token = "test-browser-key-device-00001"
+        device_hash = hash_device_token(device_token, self.settings.otp_pepper)
+        original_device_id = self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="original-browser-credential",
+            public_key="original-browser-public-key",
+            sign_count=4,
+            device_binding_hash=device_hash,
+            transports="[]",
+            aaguid="",
+            credential_device_type="device_credential",
+            credential_backed_up=False,
+            created_at=now.isoformat(),
+            auth_method="browser_key",
+        )
+        replacement_private_key = ec.generate_private_key(ec.SECP256R1())
+        replacement_public_key_bytes = replacement_private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        replacement_public_key = _base64url(replacement_public_key_bytes)
+        replacement_credential_id = _base64url(
+            hashlib.sha256(replacement_public_key_bytes).digest()
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            context = resolve_registered_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                course_id=int(course["id"]),
+            )
+            pending_id = request_student_browser_key_recovery(
+                self.repo,
+                self.settings,
+                access_context=context,
+                credential_id=replacement_credential_id,
+                public_key=replacement_public_key,
+                device_token=device_token,
+            )
+
+        pending = self.repo.get_pending_browser_enrollment(pending_id)
+        assert pending is not None
+        self.assertEqual(pending["fallback_reason"], BROWSER_KEY_RECOVERY_REASON)
+        before_approval = self.repo.get_registered_device_for_student(int(student["id"]))
+        assert before_approval is not None
+        self.assertEqual(int(before_approval["id"]), original_device_id)
+        self.assertEqual(before_approval["credential_id"], "original-browser-credential")
+
+        approved_device_id = self.repo.approve_pending_browser_enrollment(
+            pending_id=pending_id,
+            actor_identifier="manager_user",
+            reviewed_at="2026-07-01T10:01:00+03:00",
+        )
+
+        self.assertEqual(approved_device_id, original_device_id)
+        recovered_device = self.repo.get_registered_device_for_student(int(student["id"]))
+        assert recovered_device is not None
+        self.assertEqual(int(recovered_device["id"]), original_device_id)
+        self.assertEqual(recovered_device["credential_id"], replacement_credential_id)
+        self.assertEqual(int(recovered_device["sign_count"]), 0)
+
+        message_bytes = b"recovered-browser-key-message"
+        signature = replacement_private_key.sign(
+            message_bytes,
+            ec.ECDSA(hashes.SHA256()),
+        )
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            verified = authenticate_student_browser_key(
+                self.repo,
+                self.settings,
+                access_context=context,
+                credential_id=replacement_credential_id,
+                signature=_base64url(signature),
+                message=_base64url(message_bytes),
+                device_token=device_token,
+            )
+
+        self.assertEqual(verified["device_id"], original_device_id)
+        audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
+        self.assertEqual(audit[0]["event_type"], "manager_browser_key_recovered")
+        self.assertEqual(audit[0]["previous_device_id"], original_device_id)
+        self.assertEqual(audit[0]["new_device_id"], original_device_id)
+
+    def test_browser_key_recovery_rejects_an_unrecognized_browser(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        registered_token = "test-browser-key-device-00001"
+        self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="original-browser-credential",
+            public_key="original-browser-public-key",
+            sign_count=0,
+            device_binding_hash=hash_device_token(
+                registered_token,
+                self.settings.otp_pepper,
+            ),
+            transports="[]",
+            aaguid="",
+            credential_device_type="device_credential",
+            credential_backed_up=False,
+            created_at=now.isoformat(),
+            auth_method="browser_key",
+        )
+        replacement_private_key = ec.generate_private_key(ec.SECP256R1())
+        replacement_public_key_bytes = replacement_private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            context = resolve_registered_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                course_id=int(course["id"]),
+            )
+            with self.assertRaisesRegex(ValueError, "not the registered device"):
+                request_student_browser_key_recovery(
+                    self.repo,
+                    self.settings,
+                    access_context=context,
+                    credential_id=_base64url(
+                        hashlib.sha256(replacement_public_key_bytes).digest()
+                    ),
+                    public_key=_base64url(replacement_public_key_bytes),
+                    device_token="a-different-browser-device-token",
+                )
+
+        self.assertEqual(
+            self.repo.list_pending_browser_enrollments(course_id=int(course["id"])),
+            [],
+        )
+        alerts = self.repo.list_proxy_alerts(course_id=int(course["id"]))
+        self.assertEqual(
+            alerts[0]["alert_type"],
+            "browser_key_recovery_from_unrecognized_device",
+        )
 
     def test_registered_device_blocks_another_student_and_creates_alert(self) -> None:
         course, student = self._seed_course()

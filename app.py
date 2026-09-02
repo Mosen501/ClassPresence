@@ -18,14 +18,15 @@ from attendance_app import services as services_module
 
 # Streamlit Cloud may rerun app.py while imported local modules still come from
 # the previous deployment. Refresh dependencies before importing newly added APIs.
-if not hasattr(database_module, "DatabaseUnavailableError") or not hasattr(
-    database_module.AttendanceRepository,
-    "list_location_attempt_events",
+if (
+    not hasattr(database_module, "DatabaseUnavailableError")
+    or not hasattr(database_module, "BROWSER_KEY_RECOVERY_REASON")
+    or not hasattr(database_module.AttendanceRepository, "list_location_attempt_events")
 ):
     database_module = reload(database_module)
 if not hasattr(components_module, "manager_geo_capture"):
     components_module = reload(components_module)
-if not hasattr(services_module, "record_location_attempt"):
+if not hasattr(services_module, "request_student_browser_key_recovery"):
     services_module = reload(services_module)
 
 from attendance_app.browser_keys import build_browser_key_options
@@ -55,10 +56,11 @@ from attendance_app.services import (
     build_student_attendance_summary,
     now_in_app_timezone,
     otp_delivery_configuration_error,
+    record_location_attempt,
     register_student_passkey,
     request_login_code_for_access_context,
     request_student_browser_key_enrollment,
-    record_location_attempt,
+    request_student_browser_key_recovery,
     reset_student_device,
     resolve_active_student_session,
     resolve_registered_student_access_context,
@@ -97,6 +99,7 @@ if not all(
     database_module = reload(database_module)
 AttendanceRepository = database_module.AttendanceRepository
 DatabaseUnavailableError = database_module.DatabaseUnavailableError
+BROWSER_KEY_RECOVERY_REASON = database_module.BROWSER_KEY_RECOVERY_REASON
 SCHEMA_VERSION = database_module.SCHEMA_VERSION
 
 
@@ -913,6 +916,9 @@ STUDENT_MESSAGE_TRANSLATIONS = {
     "The device public key is invalid.": "مفتاح الجهاز العام غير صالح.",
     "The device credential identifier is invalid.": "معرف بيانات الجهاز غير صالح.",
     "This device could not provide a valid identity.": "تعذر التحقق من هوية هذا الجهاز.",
+    "Device credential recovery is available only during an active lecture.": "يمكن استعادة بيانات الجهاز أثناء المحاضرة فقط.",
+    "This browser is not the registered device. Ask the instructor to reset it.": "هذا المتصفح ليس الجهاز المسجل. اطلب من مدرس المقرر إعادة تعيين الجهاز.",
+    "The replacement device credential must be new.": "تعذر إنشاء بيانات حماية بديلة. حاول مرة أخرى.",
     "Location verification data is incomplete. Capture location again.": "بيانات الموقع غير مكتملة. أعد تحديد الموقع.",
     "The device returned invalid location coordinates.": "تعذر التحقق من إحداثيات الموقع.",
     "The location timestamp is invalid. Capture location again.": "بيانات وقت الموقع غير صالحة. أعد تحديد الموقع.",
@@ -935,6 +941,7 @@ STUDENT_DEVICE_ERROR_TRANSLATIONS = {
     "InvalidStateError": "تعذر استخدام بيانات الجهاز الحالية. اطلب من مدرس المقرر إعادة تعيين الجهاز.",
     "NotSupportedError": "هذا الجهاز لا يدعم طريقة التحقق المطلوبة.",
     "SecurityError": "تعذر إجراء التحقق الآمن من الجهاز. أعد فتح الصفحة وحاول مرة أخرى.",
+    "CredentialMissingError": "بيانات حماية الجهاز غير موجودة في هذا المتصفح.",
 }
 
 
@@ -2323,16 +2330,29 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                 selected_request = next(
                     row for row in pending_enrollments if int(row["id"]) == selected_pending_id
                 )
+                is_credential_recovery = (
+                    str(selected_request.get("fallback_reason") or "")
+                    == BROWSER_KEY_RECOVERY_REASON
+                )
                 st.caption(
                     f"{selected_request.get('schedule_label') or 'Lecture'} · "
-                    f"{selected_request['attendance_date']} · Automatic fallback: "
-                    f"{_device_display_text(selected_request.get('fallback_reason'))}"
+                    f"{selected_request['attendance_date']} · "
+                    + (
+                        "Registered device credential recovery"
+                        if is_credential_recovery
+                        else "New device registration · Automatic fallback: "
+                        f"{_device_display_text(selected_request.get('fallback_reason'))}"
+                    )
                 )
                 identity_verified = st.checkbox(
                     "I verified this student's identity in person",
                 )
                 approve_pending = st.form_submit_button(
-                    "Approve device",
+                    (
+                        "Approve credential replacement"
+                        if is_credential_recovery
+                        else "Approve device"
+                    ),
                     type="primary",
                     width="stretch",
                 )
@@ -2354,7 +2374,11 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                             reviewed_at=now_in_app_timezone(settings).isoformat(),
                         )
                         _invalidate_read_caches(roster=True, security=True, reports=True)
-                        st.session_state["manager_notice"] = "Registered device approved."
+                        st.session_state["manager_notice"] = (
+                            "Registered device credential replaced."
+                            if is_credential_recovery
+                            else "Registered device approved."
+                        )
                         st.rerun()
                     except Exception as error:
                         st.error(str(error))
@@ -3360,6 +3384,8 @@ def _device_event_label(value: object) -> str:
         "passkey_from_unrecognized_device": "Unrecognized Device Verification",
         "device_changed_during_browser_key_registration": "Device Changed During Registration",
         "manager_browser_key_approved": "Manager Device Approved",
+        "manager_browser_key_recovered": "Manager Credential Recovery Approved",
+        "browser_key_recovery_from_unrecognized_device": "Unrecognized Recovery Request",
     }
     return legacy_labels.get(event_type, event_type.replace("_", " ").title())
 
@@ -3684,7 +3710,7 @@ def _handle_course_location(payload) -> None:
     st.session_state["course_latitude"] = float(payload["latitude"])
     st.session_state["course_longitude"] = float(payload["longitude"])
     st.session_state["course_location_selected"] = True
-    st.rerun(scope="fragment")
+    st.rerun()
 
 
 def _sync_course_location(course) -> None:
@@ -3711,11 +3737,11 @@ def _render_access_card(context: dict) -> None:
         st.markdown(
             f"""
             <div class="cp-access-card" lang="ar" dir="rtl">
-                <span class="cp-eyebrow">تم التعرف على الجهاز المسجل</span>
+                <span class="cp-eyebrow">يوجد جهاز مسجل لهذا الطالب</span>
                 <h3><bdi>{escape(str(context['course_code']))}</bdi></h3>
                 <p><bdi>{escape(str(context['student_name']))}</bdi></p>
                 <div class="cp-access-grid">
-                    <div><span>الجهاز</span><strong>مسجل</strong></div>
+                    <div><span>الجهاز</span><strong>بانتظار التحقق</strong></div>
                     <div><span>الدخول</span><strong>من أي مكان</strong></div>
                     <div><span>الموقع</span><strong>عند الحضور فقط</strong></div>
                 </div>
@@ -3793,6 +3819,7 @@ def _set_student_access_context(context: StudentAccessContext) -> None:
     st.session_state["student_browser_key_processed"] = None
     st.session_state["student_browser_key_error"] = None
     st.session_state["student_pending_enrollment_id"] = None
+    _clear_student_browser_key_recovery()
     st.session_state["student_passkey_fallback_reason"] = None
     st.session_state["student_credential_capability"] = None
     st.session_state["student_credential_capability_operation"] = None
@@ -3839,7 +3866,7 @@ def _handle_student_access_location(
                 message="Classroom location accepted for device registration.",
             )
         _set_student_access_context(context)
-        st.rerun(scope="fragment")
+        st.rerun()
     except Exception as error:
         if snapshot is not None:
             record_location_attempt(
@@ -3933,7 +3960,7 @@ def _render_student_credential_capability(context: dict) -> None:
         "platform_available": bool(payload.get("platform_available")),
         "browser_key_supported": bool(payload.get("browser_key_supported")),
     }
-    st.rerun(scope="fragment")
+    st.rerun()
 
 
 def _render_student_device_verification_step(repo, settings, context: dict) -> None:
@@ -3942,9 +3969,77 @@ def _render_student_device_verification_step(repo, settings, context: dict) -> N
         st.error(_student_message("No registered device was found for this student."))
         return
     if str(device.get("auth_method") or "passkey") == "browser_key":
+        if _render_student_browser_key_recovery_status(repo):
+            return
         _render_student_browser_key_step(repo, settings, context, action="authenticate")
         return
     _render_student_passkey_step(repo, settings, context, action="authenticate")
+
+
+def _render_student_browser_key_recovery_status(repo) -> bool:
+    pending_id = st.session_state.get("student_pending_recovery_id")
+    if pending_id is None:
+        return False
+    pending = repo.get_pending_browser_enrollment(int(pending_id))
+    if pending is None:
+        st.session_state["student_pending_recovery_id"] = None
+        return False
+
+    status = str(pending["status"])
+    if status == "approved":
+        _render_section_title(
+            "استعادة بيانات الجهاز",
+            "وافق مدرس المقرر",
+            arabic=True,
+        )
+        st.success("تم اعتماد بيانات الحماية البديلة لهذا الجهاز.")
+        if st.button(
+            "التحقق من الجهاز والدخول",
+            type="primary",
+            width="stretch",
+            key="continue_after_browser_key_recovery",
+        ):
+            _clear_student_browser_key_recovery()
+            st.session_state["student_browser_key_operation"] = None
+            st.session_state["student_browser_key_processed"] = None
+            st.rerun()
+        return True
+    if status == "pending":
+        _render_section_title(
+            "استعادة بيانات الجهاز",
+            "بانتظار موافقة مدرس المقرر",
+            arabic=True,
+        )
+        st.info(
+            "تم إرسال طلب استعادة بيانات الجهاز. اطلب من مدرس المقرر الموافقة عليه، "
+            "ثم تحقق من حالة الطلب."
+        )
+        if st.button(
+            "التحقق من حالة الطلب",
+            width="stretch",
+            key="check_browser_key_recovery",
+        ):
+            st.rerun()
+        return True
+
+    st.error("انتهى طلب استعادة بيانات الجهاز أو تم رفضه.")
+    if st.button(
+        "إنشاء طلب استعادة جديد",
+        width="stretch",
+        key="restart_browser_key_recovery",
+    ):
+        _clear_student_browser_key_recovery(keep_needed=True)
+        st.rerun()
+    return True
+
+
+def _clear_student_browser_key_recovery(*, keep_needed: bool = False) -> None:
+    st.session_state["student_browser_key_recovery_needed"] = keep_needed
+    st.session_state["student_browser_key_recovery_started"] = False
+    st.session_state["student_browser_key_recovery_operation"] = None
+    st.session_state["student_browser_key_recovery_processed"] = None
+    st.session_state["student_browser_key_recovery_error"] = None
+    st.session_state["student_pending_recovery_id"] = None
 
 
 def _render_student_device_registration_step(repo, settings, context: dict) -> None:
@@ -4022,8 +4117,14 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
             if st.button("إعادة محاولة تسجيل الجهاز", type="primary", width="stretch"):
                 st.session_state["student_browser_key_operation"] = None
                 st.session_state["student_browser_key_processed"] = None
-                st.rerun(scope="fragment")
+                st.rerun()
             return
+    if (
+        action == "authenticate"
+        and st.session_state.get("student_browser_key_recovery_needed", False)
+    ):
+        _render_student_browser_key_recovery_request(repo, settings, context)
+        return
     title = "التحقق من الجهاز المسجل" if action == "authenticate" else "تسجيل هذا الجهاز"
     status = (
         "تأكيد الجهاز مطلوب"
@@ -4051,9 +4152,17 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
         return
     st.session_state["student_browser_key_processed"] = operation["id"]
     if payload.get("error"):
+        if (
+            action == "authenticate"
+            and str(payload.get("error_name") or "") == "CredentialMissingError"
+        ):
+            st.session_state["student_browser_key_recovery_needed"] = True
+            st.session_state["student_browser_key_operation"] = None
+            st.session_state["student_browser_key_processed"] = None
+            st.rerun()
         st.session_state["student_browser_key_error"] = str(payload["error"])
         st.session_state["student_browser_key_operation"] = None
-        st.rerun(scope="fragment")
+        st.rerun()
     try:
         if action == "authenticate":
             verified_device = authenticate_student_browser_key(
@@ -4067,7 +4176,7 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
             )
             st.session_state["student_passkey_verified"] = verified_device
             st.session_state["student_browser_key_operation"] = None
-            st.rerun(scope="fragment")
+            st.rerun()
 
         pending_id = request_student_browser_key_enrollment(
             repo,
@@ -4084,11 +4193,90 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
         st.session_state["student_pending_enrollment_id"] = pending_id
         st.session_state["student_browser_key_operation"] = None
         _invalidate_read_caches(security=True)
-        st.rerun(scope="fragment")
+        st.rerun()
     except Exception as error:
         st.session_state["student_browser_key_error"] = str(error)
         st.session_state["student_browser_key_operation"] = None
-        st.rerun(scope="fragment")
+        st.rerun()
+
+
+def _render_student_browser_key_recovery_request(repo, settings, context: dict) -> None:
+    _render_section_title(
+        "استعادة بيانات الجهاز",
+        "يتطلب موافقة مدرس المقرر",
+        arabic=True,
+    )
+    st.error(
+        "يوجد جهاز مسجل لهذا الطالب، لكن بيانات الحماية المحلية غير موجودة في هذا المتصفح."
+    )
+    st.info(
+        "يمكن إنشاء بيانات حماية بديلة أثناء المحاضرة. لن يتغير الجهاز المسجل، "
+        "ويجب أن يوافق مدرس المقرر على الطلب."
+    )
+    recovery_error = st.session_state.pop("student_browser_key_recovery_error", None)
+    if recovery_error:
+        st.error(_student_message(recovery_error))
+
+    if not st.session_state.get("student_browser_key_recovery_started", False):
+        if st.button(
+            "طلب استعادة بيانات الجهاز",
+            type="primary",
+            width="stretch",
+            key="request_browser_key_recovery",
+        ):
+            st.session_state["student_browser_key_recovery_started"] = True
+            st.session_state["student_browser_key_recovery_operation"] = None
+            st.session_state["student_browser_key_recovery_processed"] = None
+            st.rerun()
+        return
+
+    signature = (
+        int(context["student_id"]),
+        str(context["device_binding_hash"]),
+        int(context["schedule_id"]),
+        str(context["attendance_date"]),
+    )
+    operation = st.session_state.get("student_browser_key_recovery_operation")
+    if operation is None or tuple(operation.get("signature", ())) != signature:
+        operation = {"id": uuid4().hex, "signature": signature}
+        st.session_state["student_browser_key_recovery_operation"] = operation
+    payload = passkey_action(
+        action="browser_register_auto",
+        options_json="{}",
+        operation_id=operation["id"],
+        key=f"student_browser_key_recovery_{operation['id']}",
+    )
+    if not payload or payload.get("operation_id") != operation["id"]:
+        return
+    if st.session_state.get("student_browser_key_recovery_processed") == operation["id"]:
+        return
+    st.session_state["student_browser_key_recovery_processed"] = operation["id"]
+    if payload.get("error"):
+        st.session_state["student_browser_key_recovery_error"] = str(payload["error"])
+        st.session_state["student_browser_key_recovery_started"] = False
+        st.session_state["student_browser_key_recovery_operation"] = None
+        st.rerun()
+
+    try:
+        pending_id = request_student_browser_key_recovery(
+            repo,
+            settings,
+            access_context=StudentAccessContext(**context),
+            credential_id=str(payload["credential_id"]),
+            public_key=str(payload["public_key"]),
+            device_token=str(payload["device_token"]),
+        )
+        st.session_state["student_pending_recovery_id"] = pending_id
+        st.session_state["student_browser_key_recovery_needed"] = False
+        st.session_state["student_browser_key_recovery_started"] = False
+        st.session_state["student_browser_key_recovery_operation"] = None
+        _invalidate_read_caches(security=True)
+        st.rerun()
+    except Exception as error:
+        st.session_state["student_browser_key_recovery_error"] = str(error)
+        st.session_state["student_browser_key_recovery_started"] = False
+        st.session_state["student_browser_key_recovery_operation"] = None
+        st.rerun()
 
 
 def _ensure_browser_key_operation(repo, settings, context: dict, *, action: str) -> dict:
@@ -4169,10 +4357,10 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
                 f"{error_name}: {payload['error']}"
             )
             st.session_state["student_passkey_operation"] = None
-            st.rerun(scope="fragment")
+            st.rerun()
         st.session_state["student_passkey_error"] = str(payload["error"])
         st.session_state["student_passkey_operation"] = None
-        st.rerun(scope="fragment")
+        st.rerun()
 
     try:
         if action == "authenticate":
@@ -4188,7 +4376,7 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
             )
             st.session_state["student_passkey_verified"] = verified_device
             st.session_state["student_passkey_operation"] = None
-            st.rerun(scope="fragment")
+            st.rerun()
 
         verified_device = register_student_passkey(
             repo,
@@ -4212,7 +4400,7 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
     except Exception as error:
         st.session_state["student_passkey_error"] = str(error)
         st.session_state["student_passkey_operation"] = None
-        st.rerun(scope="fragment")
+        st.rerun()
 
 
 def _ensure_passkey_operation(repo, settings, context: dict, *, action: str) -> dict:
@@ -4328,7 +4516,7 @@ def _handle_stamp_location(payload, repo, settings, course, student, auth: dict)
     }
     if result.success:
         _invalidate_read_caches(attendance=True, reports=True)
-    st.rerun(scope="fragment")
+    st.rerun()
 
 
 def _reset_student_access(*, clear_id: bool) -> None:
@@ -4350,6 +4538,7 @@ def _reset_student_access(*, clear_id: bool) -> None:
     st.session_state["student_browser_key_processed"] = None
     st.session_state["student_browser_key_error"] = None
     st.session_state["student_pending_enrollment_id"] = None
+    _clear_student_browser_key_recovery()
     st.session_state["student_passkey_fallback_reason"] = None
     st.session_state["student_credential_capability"] = None
     st.session_state["student_credential_capability_operation"] = None
@@ -4453,6 +4642,12 @@ def _init_session_state() -> None:
         "student_browser_key_processed": None,
         "student_browser_key_error": None,
         "student_pending_enrollment_id": None,
+        "student_browser_key_recovery_needed": False,
+        "student_browser_key_recovery_started": False,
+        "student_browser_key_recovery_operation": None,
+        "student_browser_key_recovery_processed": None,
+        "student_browser_key_recovery_error": None,
+        "student_pending_recovery_id": None,
         "student_passkey_fallback_reason": None,
         "student_credential_capability": None,
         "student_credential_capability_operation": None,

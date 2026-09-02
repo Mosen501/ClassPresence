@@ -56,6 +56,7 @@
           verifyDescription: "Your credential confirms this registered device.",
           browserPreparing: "Preparing secure device registration...",
           browserPrepared: "Secure device registration prepared.",
+          browserCredentialMissing: "The secure credential stored in this browser is missing.",
           unsupported: "Secure device verification is not supported on this device.",
           browserUnsupported: "Secure device storage is not supported on this device.",
           checking: "Checking device compatibility...",
@@ -73,6 +74,7 @@
           verifyDescription: "تؤكد بيانات الاعتماد هوية الجهاز المسجل.",
           browserPreparing: "جارٍ إعداد تسجيل الجهاز الآمن...",
           browserPrepared: "تم إعداد تسجيل الجهاز الآمن.",
+          browserCredentialMissing: "بيانات الحماية المحفوظة في هذا المتصفح غير موجودة.",
           unsupported: "هذا الجهاز لا يدعم التحقق الآمن من الجهاز.",
           browserUnsupported: "هذا الجهاز لا يدعم التخزين الآمن لبيانات الجهاز.",
           checking: "جارٍ التحقق من توافق الجهاز...",
@@ -154,6 +156,15 @@
         database.close();
       }
 
+      async function requestPersistentStorage() {
+        if (!navigator.storage || typeof navigator.storage.persist !== "function") return;
+        try {
+          await navigator.storage.persist();
+        } catch (_error) {
+          // Persistence is best-effort; the non-extractable browser key remains usable without it.
+        }
+      }
+
       async function loadBrowserKey(credentialId) {
         const database = await openCredentialDatabase();
         const record = await new Promise((resolve, reject) => {
@@ -190,6 +201,7 @@
           publicKey,
           createdAt: new Date().toISOString(),
         });
+        await requestPersistentStorage();
         return { credential_id: credentialId, public_key: publicKey };
       }
 
@@ -197,7 +209,9 @@
         if (!browserKeySupported()) throw new Error(copy("browserUnsupported"));
         const record = await loadBrowserKey(options.credentialId);
         if (!record || !record.privateKey) {
-          throw new Error("The registered device credential is missing. Ask the manager to reset it.");
+          const error = new Error(copy("browserCredentialMissing"));
+          error.name = "CredentialMissingError";
+          throw error;
         }
         const signature = await crypto.subtle.sign(
           { name: "ECDSA", hash: "SHA-256" },

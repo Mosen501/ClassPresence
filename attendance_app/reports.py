@@ -1041,6 +1041,8 @@ def _device_event_label(value: object) -> str:
         "passkey_from_unrecognized_device": "Unrecognized Device Verification",
         "device_changed_during_browser_key_registration": "Device Changed During Registration",
         "manager_browser_key_approved": "Manager Device Approved",
+        "manager_browser_key_recovered": "Manager Credential Recovery Approved",
+        "browser_key_recovery_from_unrecognized_device": "Unrecognized Recovery Request",
     }
     return legacy_labels.get(event_type, event_type.replace("_", " ").title())
 

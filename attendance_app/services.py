@@ -13,7 +13,10 @@ from attendance_app.browser_keys import (
     verify_browser_key_signature,
 )
 from attendance_app.config import Settings
-from attendance_app.database import AttendanceRepository
+from attendance_app.database import (
+    BROWSER_KEY_RECOVERY_REASON,
+    AttendanceRepository,
+)
 from attendance_app.location_diagnostics import browser_family
 from attendance_app.passkeys import (
     complete_authentication,
@@ -796,6 +799,77 @@ def request_student_browser_key_enrollment(
         expires_at=access_context.session_expires_at,
         created_at=now.isoformat(),
         fallback_reason=fallback_reason[:500],
+    )
+
+
+def request_student_browser_key_recovery(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    access_context: StudentAccessContext,
+    credential_id: str,
+    public_key: str,
+    device_token: str,
+) -> int:
+    """Request replacement of a lost local key without registering another device."""
+    now = now_in_app_timezone(settings)
+    snapshot = _require_device_access_context(
+        repo,
+        settings,
+        access_context,
+        now=now,
+    )
+    if snapshot is None:
+        raise ValueError("Device credential recovery requires registered portal access.")
+    active_schedule = (
+        find_active_schedule(snapshot["schedules"], now)
+        if _course_is_active_today(snapshot["course"], now)
+        else None
+    )
+    if active_schedule is None:
+        raise ValueError(
+            "Device credential recovery is available only during an active lecture."
+        )
+    device = snapshot["device"]
+    if device is None:
+        raise ValueError("No registered device was found for this student.")
+    if str(device.get("auth_method") or "passkey") != "browser_key":
+        raise ValueError("This student must verify using the registered device method.")
+
+    validate_browser_public_key(credential_id=credential_id, public_key=public_key)
+    device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
+    if not hmac.compare_digest(
+        device_binding_hash,
+        str(device["device_binding_hash"]),
+    ):
+        _record_proxy_alert(
+            repo,
+            now=now,
+            course_id=access_context.course_id,
+            student_id=access_context.student_id,
+            schedule_id=int(active_schedule["id"]),
+            alert_type="browser_key_recovery_from_unrecognized_device",
+            severity="high",
+            message="A browser credential recovery request came from an unrecognized device.",
+            device_binding_hash=device_binding_hash,
+        )
+        raise ValueError(
+            "This browser is not the registered device. Ask the instructor to reset it."
+        )
+    if hmac.compare_digest(credential_id, str(device["credential_id"])):
+        raise ValueError("The replacement device credential must be new.")
+
+    return repo.create_pending_browser_enrollment(
+        student_id=access_context.student_id,
+        course_id=access_context.course_id,
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=now.date().isoformat(),
+        credential_id=credential_id,
+        public_key=public_key,
+        device_binding_hash=device_binding_hash,
+        expires_at=_schedule_window_end(now, active_schedule).isoformat(),
+        created_at=now.isoformat(),
+        fallback_reason=BROWSER_KEY_RECOVERY_REASON,
     )
 
 

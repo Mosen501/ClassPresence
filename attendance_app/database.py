@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - sqlite-only local/test environments
 
 Record = dict[str, Any]
 SCHEMA_VERSION = "2026-09-01-3"
+BROWSER_KEY_RECOVERY_REASON = "registered_browser_credential_missing"
 
 
 class DatabaseUnavailableError(RuntimeError):
@@ -2150,11 +2151,22 @@ class AttendanceRepository:
                 )
                 raise ValueError("This device enrollment request has expired.")
 
-            existing = connection.execute(
+            registered_device = connection.execute(
                 self._sql(
                     """
                     SELECT * FROM registered_devices
-                    WHERE student_id = ? OR device_binding_hash = ? OR credential_id = ?
+                    WHERE student_id = ?
+                    LIMIT 1
+                    """
+                ),
+                (int(pending["student_id"]),),
+            ).fetchone()
+            conflicting_device = connection.execute(
+                self._sql(
+                    """
+                    SELECT * FROM registered_devices
+                    WHERE student_id <> ?
+                      AND (device_binding_hash = ? OR credential_id = ?)
                     LIMIT 1
                     """
                 ),
@@ -2164,39 +2176,77 @@ class AttendanceRepository:
                     str(pending["credential_id"]),
                 ),
             ).fetchone()
-            if existing is not None:
+            if conflicting_device is not None:
                 raise ValueError("The student or device already has a registered device.")
 
-            insert_query = """
-                INSERT INTO registered_devices (
-                    student_id, credential_id, public_key, sign_count,
-                    device_binding_hash, transports, aaguid,
-                    credential_device_type, credential_backed_up, auth_method,
-                    created_at, last_used_at
-                )
-                VALUES (?, ?, ?, 0, ?, '[]', '', 'device_credential', 0,
-                        'browser_key', ?, ?)
-            """
-            if self.backend == "postgres":
-                insert_query += " RETURNING id"
-            cursor = connection.execute(
-                self._sql(insert_query),
-                (
-                    int(pending["student_id"]),
-                    str(pending["credential_id"]),
-                    str(pending["public_key"]),
-                    str(pending["device_binding_hash"]),
-                    reviewed_at,
-                    reviewed_at,
-                ),
+            is_recovery = (
+                str(pending["fallback_reason"] or "")
+                == BROWSER_KEY_RECOVERY_REASON
             )
-            if self.backend == "postgres":
-                inserted = cursor.fetchone()
-                if inserted is None:
-                    raise RuntimeError("Expected a registered device ID.")
-                device_id = int(inserted["id"])
+            if is_recovery:
+                if (
+                    registered_device is None
+                    or str(registered_device["auth_method"] or "passkey")
+                    != "browser_key"
+                    or str(registered_device["device_binding_hash"])
+                    != str(pending["device_binding_hash"])
+                ):
+                    raise ValueError(
+                        "The registered device no longer matches this recovery request."
+                    )
+                device_id = int(registered_device["id"])
+                connection.execute(
+                    self._sql(
+                        """
+                        UPDATE registered_devices
+                        SET credential_id = ?, public_key = ?, sign_count = 0,
+                            transports = '[]', aaguid = '',
+                            credential_device_type = 'device_credential',
+                            credential_backed_up = 0, auth_method = 'browser_key',
+                            last_used_at = ?
+                        WHERE id = ?
+                        """
+                    ),
+                    (
+                        str(pending["credential_id"]),
+                        str(pending["public_key"]),
+                        reviewed_at,
+                        device_id,
+                    ),
+                )
             else:
-                device_id = int(cursor.lastrowid)
+                if registered_device is not None:
+                    raise ValueError("The student or device already has a registered device.")
+                insert_query = """
+                    INSERT INTO registered_devices (
+                        student_id, credential_id, public_key, sign_count,
+                        device_binding_hash, transports, aaguid,
+                        credential_device_type, credential_backed_up, auth_method,
+                        created_at, last_used_at
+                    )
+                    VALUES (?, ?, ?, 0, ?, '[]', '', 'device_credential', 0,
+                            'browser_key', ?, ?)
+                """
+                if self.backend == "postgres":
+                    insert_query += " RETURNING id"
+                cursor = connection.execute(
+                    self._sql(insert_query),
+                    (
+                        int(pending["student_id"]),
+                        str(pending["credential_id"]),
+                        str(pending["public_key"]),
+                        str(pending["device_binding_hash"]),
+                        reviewed_at,
+                        reviewed_at,
+                    ),
+                )
+                if self.backend == "postgres":
+                    inserted = cursor.fetchone()
+                    if inserted is None:
+                        raise RuntimeError("Expected a registered device ID.")
+                    device_id = int(inserted["id"])
+                else:
+                    device_id = int(cursor.lastrowid)
 
             connection.execute(
                 self._sql(
@@ -2226,11 +2276,23 @@ class AttendanceRepository:
                 student_name=str(student["full_name"]),
                 course_id=int(pending["course_id"]),
                 course_code=str(course["code"]) if course is not None else "",
-                event_type="manager_device_approved",
+                event_type=(
+                    "manager_browser_key_recovered"
+                    if is_recovery
+                    else "manager_device_approved"
+                ),
                 actor_type="manager",
                 actor_identifier=actor_identifier,
-                previous_device_id=None,
-                previous_device_binding_hash=None,
+                previous_device_id=(
+                    int(registered_device["id"])
+                    if is_recovery and registered_device is not None
+                    else None
+                ),
+                previous_device_binding_hash=(
+                    str(registered_device["device_binding_hash"])
+                    if is_recovery and registered_device is not None
+                    else None
+                ),
                 new_device_id=device_id,
                 new_device_binding_hash=str(pending["device_binding_hash"]),
                 created_at=reviewed_at,

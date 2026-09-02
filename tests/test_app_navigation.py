@@ -82,8 +82,22 @@ class AppNavigationTestCase(unittest.TestCase):
 
         self.assertIn('register: "Register this device"', component_html)
         self.assertIn('componentArgs.action === "browser_register_auto"', component_html)
+        self.assertIn('error.name = "CredentialMissingError"', component_html)
+        self.assertIn("navigator.storage.persist()", component_html)
+        self.assertNotIn("privateKeyPkcs8", component_html)
         self.assertIn("void performAction()", component_html)
         self.assertNotIn('register: "Register with a passkey"', component_html)
+
+    def test_missing_browser_credential_uses_approved_recovery_and_full_rerun(self) -> None:
+        app_source = APP_PATH.read_text()
+        browser_step_start = app_source.index("def _render_student_browser_key_step")
+        browser_step_end = app_source.index("def _ensure_browser_key_operation")
+        browser_step_source = app_source[browser_step_start:browser_step_end]
+
+        self.assertIn('== "CredentialMissingError"', browser_step_source)
+        self.assertIn("request_student_browser_key_recovery(", browser_step_source)
+        self.assertIn("طلب استعادة بيانات الجهاز", browser_step_source)
+        self.assertNotIn('st.rerun(scope="fragment")', browser_step_source)
 
     def test_attendance_uses_one_location_and_stamp_action(self) -> None:
         app_source = APP_PATH.read_text()
