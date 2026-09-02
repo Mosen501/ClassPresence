@@ -639,6 +639,30 @@ STUDENT_RTL_CSS = """
     letter-spacing: 0;
 }
 
+.block-container .cp-page-head,
+.block-container .cp-access-card,
+.block-container .cp-metrics,
+.block-container .cp-metric,
+.block-container .cp-section-title,
+.block-container .cp-empty-state,
+.block-container .cp-result-ok,
+.block-container .cp-result-bad,
+.block-container [data-testid="stVerticalBlockBorderWrapper"],
+.block-container [data-testid="stForm"],
+.block-container [data-testid="stAlert"],
+.block-container [data-testid="stButtonGroup"],
+.block-container [data-testid="stSelectbox"],
+.block-container [data-testid="stTextInput"],
+.block-container [data-testid="stDataFrame"] {
+    direction: rtl;
+    text-align: right;
+}
+
+.block-container .cp-metric strong {
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
 .cp-top-meta,
 .cp-date-block {
     text-align: left;
@@ -740,7 +764,7 @@ STUDENT_MESSAGE_TRANSLATIONS = {
     "This verification belongs to a different lecture window.": "هذا التحقق مرتبط بمحاضرة أخرى.",
     "No active login code was found. Generate a new code.": "لا يوجد رمز تحقق فعال. اطلب رمزاً جديداً.",
     "This code belongs to a different lecture window. Request a new code.": "هذا الرمز مرتبط بمحاضرة أخرى. اطلب رمزاً جديداً.",
-    "This code must be verified on the device that requested it.": "يجب إدخال الرمز على الجهاز الذي طلبه.",
+    "This code must be verified on the device that requested it.": "أدخل الرمز من نفس الجهاز الذي بدأت منه عملية التسجيل.",
     "This code is not bound to the verified device.": "الرمز غير مرتبط بالجهاز الذي تم التحقق منه.",
     "The one-time code is invalid.": "رمز التحقق غير صحيح.",
     "Device identity changed. Start the check-in again.": "تغيرت هوية الجهاز. ابدأ تسجيل الحضور من جديد.",
@@ -770,7 +794,15 @@ STUDENT_MESSAGE_TRANSLATIONS = {
     "Attendance has already been stamped for this schedule window.": "تم تسجيل حضورك لهذه المحاضرة مسبقاً.",
     "This device has already been used for another student in this lecture.": "تم استخدام هذا الجهاز لطالب آخر في هذه المحاضرة.",
     "This device has already been used in this lecture.": "تم استخدام هذا الجهاز في هذه المحاضرة مسبقاً.",
-    "A one-time code has been generated and shown on this page.": "تم إنشاء رمز التحقق وعرضه في هذه الصفحة.",
+    "A one-time code has been generated and shown on this page.": "استخدم رمز التحقق الظاهر أدناه لإكمال تسجيل الجهاز.",
+}
+
+STUDENT_DEVICE_ERROR_TRANSLATIONS = {
+    "NotAllowedError": "لم يكتمل التحقق من الجهاز. حاول مرة أخرى.",
+    "AbortError": "تم إلغاء التحقق من الجهاز. حاول مرة أخرى.",
+    "InvalidStateError": "تعذر استخدام بيانات الجهاز الحالية. اطلب من مدرس المقرر إعادة تعيين الجهاز.",
+    "NotSupportedError": "هذا الجهاز لا يدعم طريقة التحقق المطلوبة.",
+    "SecurityError": "تعذر إجراء التحقق الآمن من الجهاز. أعد فتح الصفحة وحاول مرة أخرى.",
 }
 
 
@@ -2170,7 +2202,7 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
     )
     check_col, info_col = st.columns([1, 0.65], gap="large")
     with check_col:
-        _render_section_title("تسجيل الحضور", "يتحقق من الموقع تلقائياً")
+        _render_section_title("تسجيل الحضور", "يتحقق من الموقع تلقائياً", arabic=True)
         stamp_geo = geo_capture(
             "تسجيل الحضور",
             key="student_stamp_location",
@@ -2180,11 +2212,12 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
         if result:
             css_class = "cp-result-ok" if result["success"] else "cp-result-bad"
             st.markdown(
-                f'<div class="{css_class}">{escape(_student_message(result["message"]))}</div>',
+                f'<div class="{css_class}" lang="ar" dir="rtl">'
+                f'{escape(_student_message(result["message"]))}</div>',
                 unsafe_allow_html=True,
             )
     with info_col:
-        _render_section_title("اليوم", "الحالة الحالية")
+        _render_section_title("اليوم", "الحالة الحالية", arabic=True)
         existing = _cached_attendance_exists(
             settings.database_target,
             int(course["id"]),
@@ -2194,10 +2227,15 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
         )
         _render_metrics(
             [
-                ("الحالة", "حاضر" if existing else "بانتظار التسجيل", active_schedule["label"]),
+                (
+                    "حالة الحضور",
+                    "حاضر" if existing else "بانتظار تسجيل الحضور",
+                    active_schedule["label"],
+                ),
                 ("ينتهي", active_schedule["end_time"], settings.app_timezone),
             ],
             compact=True,
+            arabic=True,
         )
 
 
@@ -2226,19 +2264,27 @@ def _render_student_status(repo, settings, course, student, active_schedule) -> 
             ("الغيابات", summary.absences, "من المحاضرات المنتهية"),
             ("المحاضرات", summary.total_meetings, "إجمالي المقرر"),
             (
-                "أهلية الاختبار",
-                "غير مؤهل" if summary.denied_exam_entry else "مؤهل",
+                "أهلية الاختبار النهائي",
+                (
+                    "غير مؤهل للاختبار النهائي"
+                    if summary.denied_exam_entry
+                    else "مؤهل للاختبار النهائي"
+                ),
                 f"حد الغياب {summary.absence_threshold}",
             ),
-        ]
+        ],
+        arabic=True,
     )
     _render_section_title(
         "تقدم الحضور",
         f"{summary.attendance_pct_of_total:.0f}% من المقرر",
+        arabic=True,
     )
     st.progress(min(max(summary.attendance_pct_of_total / 100, 0.0), 1.0))
     if summary.denied_exam_entry:
-        st.error("تم بلوغ حد الغياب.")
+        st.error(
+            "تجاوزت حد الغياب المسموح، ولذلك أصبحت غير مؤهل للاختبار النهائي."
+        )
     elif active_schedule is not None:
         st.success(f"نافذة {active_schedule['label']} متاحة الآن.")
     else:
@@ -2260,7 +2306,7 @@ def _render_student_history(repo, settings, course, student) -> None:
         1000,
     )
     if not records:
-        _empty_state("لا توجد سجلات حضور حتى الآن.")
+        _empty_state("لا توجد سجلات حضور حتى الآن.", arabic=True)
         return
     st.dataframe(
         [
@@ -2294,7 +2340,7 @@ def _closed_check_in(repo, settings, course) -> None:
             break
     st.markdown(
         """
-        <div class="cp-result-bad">تسجيل الحضور مغلق الآن. يمكنك مراجعة الحالة والسجل.</div>
+        <div class="cp-result-bad" lang="ar" dir="rtl">تسجيل الحضور مغلق الآن. يمكنك مراجعة الحالة والسجل.</div>
         """,
         unsafe_allow_html=True,
     )
@@ -2309,6 +2355,7 @@ def _closed_check_in(repo, settings, course) -> None:
                 ("تبدأ", next_schedule["start_time"], _arabic_short_date(next_date)),
             ],
             compact=True,
+            arabic=True,
         )
 
 
@@ -2366,29 +2413,36 @@ def _render_page_head(
     )
 
 
-def _render_metrics(items, *, compact: bool = False) -> None:
+def _render_metrics(items, *, compact: bool = False, arabic: bool = False) -> None:
     size_class = " compact" if compact else ""
+    language_attributes = ' lang="ar" dir="rtl"' if arabic else ""
     cells = "".join(
-        f'<div class="cp-metric"><span>{escape(str(label))}</span>'
+        f'<div class="cp-metric"{language_attributes}><span>{escape(str(label))}</span>'
         f'<strong><bdi>{escape(str(value))}</bdi></strong>'
         f'<small><bdi>{escape(str(detail))}</bdi></small></div>'
         for label, value, detail in items
     )
     st.markdown(
-        f'<div class="cp-metrics{size_class}">{cells}</div>',
+        f'<div class="cp-metrics{size_class}"{language_attributes}>{cells}</div>',
         unsafe_allow_html=True,
     )
 
 
-def _render_section_title(title: str, meta: str) -> None:
+def _render_section_title(title: str, meta: str, *, arabic: bool = False) -> None:
+    language_attributes = ' lang="ar" dir="rtl"' if arabic else ""
     st.markdown(
-        f'<div class="cp-section-title"><h2>{escape(title)}</h2><span>{escape(meta)}</span></div>',
+        f'<div class="cp-section-title"{language_attributes}>'
+        f'<h2>{escape(title)}</h2><span>{escape(meta)}</span></div>',
         unsafe_allow_html=True,
     )
 
 
-def _empty_state(message: str) -> None:
-    st.markdown(f'<div class="cp-empty-state">{escape(message)}</div>', unsafe_allow_html=True)
+def _empty_state(message: str, *, arabic: bool = False) -> None:
+    language_attributes = ' lang="ar" dir="rtl"' if arabic else ""
+    st.markdown(
+        f'<div class="cp-empty-state"{language_attributes}>{escape(message)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _arabic_weekday(weekday: int) -> str:
@@ -2429,6 +2483,9 @@ def _device_display_text(value: object) -> str:
 
 def _student_message(message: object) -> str:
     text = str(message).strip()
+    technical_name, separator, _detail = text.partition(":")
+    if separator and technical_name in STUDENT_DEVICE_ERROR_TRANSLATIONS:
+        return STUDENT_DEVICE_ERROR_TRANSLATIONS[technical_name]
     if any("\u0600" <= character <= "\u06ff" for character in text):
         return text
     translated = STUDENT_MESSAGE_TRANSLATIONS.get(text)
@@ -2442,7 +2499,7 @@ def _student_message(message: object) -> str:
     if text.startswith("You are not in class"):
         return "أنت خارج نطاق القاعة المسموح به."
     if text.startswith("Location accuracy must be within"):
-        return "دقة الموقع غير كافية. اقترب من نافذة ثم أعد المحاولة."
+        return "تعذر تحديد موقعك بدقة. تأكد من تفعيل «الموقع الدقيق»، ثم حاول مرة أخرى."
     if text.startswith("No class is active for your student ID"):
         return "لا توجد محاضرة متاحة لهذا الرقم الجامعي الآن."
     if text.startswith(("Unsupported OTP delivery mode", "Email OTP is enabled")):
@@ -2971,7 +3028,7 @@ def _render_student_device_registration_step(repo, settings, context: dict) -> N
         if pending is None:
             st.session_state["student_pending_enrollment_id"] = None
         elif str(pending["status"]) == "approved":
-            st.success("وافق المسؤول على تسجيل هذا الجهاز.")
+            st.success("وافق مدرس المقرر على تسجيل هذا الجهاز.")
             if st.button("متابعة باستخدام الجهاز المسجل", type="primary", width="stretch"):
                 try:
                     portal_context = resolve_registered_student_access_context(
@@ -2989,8 +3046,15 @@ def _render_student_device_registration_step(repo, settings, context: dict) -> N
                     st.error(_student_message(error))
             return
         elif str(pending["status"]) == "pending":
-            _render_section_title("طلب تسجيل الجهاز", "بانتظار موافقة المسؤول")
-            st.info("تحقق المسؤول من هويتك حضورياً ثم يوافق على الطلب من صفحة الأمان.")
+            _render_section_title(
+                "طلب تسجيل الجهاز",
+                "بانتظار موافقة مدرس المقرر",
+                arabic=True,
+            )
+            st.info(
+                "تم إرسال طلب تسجيل الجهاز. اطلب من مدرس المقرر الموافقة على الطلب، "
+                "ثم اضغط «التحقق من حالة الموافقة»."
+            )
             if st.button("التحقق من حالة الموافقة", width="stretch"):
                 st.rerun(scope="fragment")
             return
@@ -3015,8 +3079,8 @@ def _render_student_device_registration_step(repo, settings, context: dict) -> N
 
     if fallback_reason is not None:
         st.warning(
-            "يجري إعداد طريقة الحماية الآمنة المتاحة لهذا الجهاز تلقائياً. "
-            "يجب أن يتحقق المسؤول من هويتك حضورياً ويوافق على الطلب."
+            "سيتم إعداد طريقة الحماية الآمنة المتاحة لهذا الجهاز تلقائياً. "
+            "بعد إرسال الطلب، اطلب من مدرس المقرر الموافقة عليه."
         )
         _render_student_browser_key_step(repo, settings, context, action="register")
         return
@@ -3035,8 +3099,12 @@ def _render_student_browser_key_step(repo, settings, context: dict, *, action: s
                 st.rerun(scope="fragment")
             return
     title = "التحقق من الجهاز المسجل" if action == "authenticate" else "تسجيل هذا الجهاز"
-    status = "تأكيد الجهاز مطلوب" if action == "authenticate" else "يتطلب موافقة المسؤول"
-    _render_section_title(title, status)
+    status = (
+        "تأكيد الجهاز مطلوب"
+        if action == "authenticate"
+        else "يتطلب موافقة مدرس المقرر"
+    )
+    _render_section_title(title, status, arabic=True)
     try:
         operation = _ensure_browser_key_operation(repo, settings, context, action=action)
     except Exception as error:
@@ -3146,7 +3214,7 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
         st.error(_student_message(error))
     title = "التحقق من الجهاز المسجل" if action == "authenticate" else "تسجيل هذا الجهاز"
     status = "تأكيد الجهاز مطلوب" if action == "authenticate" else "إعداد لمرة واحدة"
-    _render_section_title(title, status)
+    _render_section_title(title, status, arabic=True)
 
     try:
         operation = _ensure_passkey_operation(repo, settings, context, action=action)

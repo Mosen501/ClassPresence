@@ -11,7 +11,12 @@ from zoneinfo import ZoneInfo
 
 from streamlit.testing.v1 import AppTest
 
-from app import STUDENT_SECTION_LABELS, STUDENT_SECTIONS, _student_message
+from app import (
+    STUDENT_RTL_CSS,
+    STUDENT_SECTION_LABELS,
+    STUDENT_SECTIONS,
+    _student_message,
+)
 from attendance_app.components import geo_capture, passkey_action
 from attendance_app.database import AttendanceRepository
 
@@ -72,6 +77,36 @@ class AppNavigationTestCase(unittest.TestCase):
             _student_message("A one-time code has been sent to student@example.edu."),
             "تم إرسال رمز التحقق إلى student@example.edu.",
         )
+        self.assertEqual(
+            _student_message("A one-time code has been generated and shown on this page."),
+            "استخدم رمز التحقق الظاهر أدناه لإكمال تسجيل الجهاز.",
+        )
+        self.assertEqual(
+            _student_message("This code must be verified on the device that requested it."),
+            "أدخل الرمز من نفس الجهاز الذي بدأت منه عملية التسجيل.",
+        )
+        self.assertEqual(
+            _student_message("Location accuracy must be within 50 m."),
+            "تعذر تحديد موقعك بدقة. تأكد من تفعيل «الموقع الدقيق»، ثم حاول مرة أخرى.",
+        )
+        self.assertEqual(
+            _student_message("NotAllowedError: لم يكتمل طلب بيانات الاعتماد."),
+            "لم يكتمل التحقق من الجهاز. حاول مرة أخرى.",
+        )
+
+    def test_student_cards_and_streamlit_containers_are_forced_to_rtl(self) -> None:
+        for selector in (
+            ".block-container .cp-access-card",
+            ".block-container .cp-metric",
+            ".block-container .cp-result-ok",
+            '[data-testid="stVerticalBlockBorderWrapper"]',
+            '[data-testid="stForm"]',
+            '[data-testid="stAlert"]',
+            '[data-testid="stDataFrame"]',
+        ):
+            self.assertIn(selector, STUDENT_RTL_CSS)
+        self.assertIn("direction: rtl", STUDENT_RTL_CSS)
+        self.assertIn("text-align: right", STUDENT_RTL_CSS)
 
     def test_authenticated_student_sections_render_in_arabic(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -150,14 +185,31 @@ class AppNavigationTestCase(unittest.TestCase):
                 self.assertEqual(len(app.exception), 0)
                 self.assertIn("خروج", [button.label for button in app.button])
                 self.assertIn("تسجيل الحضور", self._markdown_text(app))
+                self.assertIn('class="cp-metrics compact" lang="ar" dir="rtl"', self._markdown_text(app))
+                self.assertIn("بانتظار تسجيل الحضور", self._markdown_text(app))
 
                 app.session_state["student_section"] = "Status"
                 app.run(timeout=30)
-                self.assertIn("أهلية الاختبار", self._markdown_text(app))
+                self.assertIn("أهلية الاختبار النهائي", self._markdown_text(app))
+                self.assertIn("مؤهل للاختبار النهائي", self._markdown_text(app))
+                self.assertIn('class="cp-metrics" lang="ar" dir="rtl"', self._markdown_text(app))
 
                 app.session_state["student_section"] = "History"
                 app.run(timeout=30)
                 self.assertIn("لا توجد سجلات حضور حتى الآن.", self._markdown_text(app))
+                self.assertIn('class="cp-empty-state" lang="ar" dir="rtl"', self._markdown_text(app))
+
+    def test_student_approval_message_uses_instructor_language(self) -> None:
+        app_source = APP_PATH.read_text()
+
+        self.assertIn(
+            "اطلب من مدرس المقرر الموافقة على الطلب",
+            app_source,
+        )
+        self.assertNotIn(
+            "تحقق المسؤول من هويتك حضورياً ثم يوافق على الطلب من صفحة الأمان.",
+            app_source,
+        )
 
     def test_student_back_clears_id_without_mutating_rendered_widget(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
