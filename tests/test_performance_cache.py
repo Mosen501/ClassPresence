@@ -30,6 +30,16 @@ class PerformanceCacheTestCase(unittest.TestCase):
         self.assertIs(first, second)
         initialize.assert_called_once_with()
 
+    def test_repository_cache_is_separated_by_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "attendance.db")
+            with patch.object(AttendanceRepository, "init_schema") as initialize:
+                first = _get_repository(database_path, "repository-v1")
+                second = _get_repository(database_path, "repository-v2")
+
+        self.assertIsNot(first, second)
+        self.assertEqual(initialize.call_count, 2)
+
     def test_course_list_query_is_reused(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = str(Path(temp_dir) / "attendance.db")

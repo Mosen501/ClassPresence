@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, timedelta
 from html import escape
+from importlib import reload
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -10,10 +11,10 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from attendance_app import database as database_module
 from attendance_app.browser_keys import build_browser_key_options
 from attendance_app.components import geo_capture, location_picker, passkey_action
 from attendance_app.config import load_settings
-from attendance_app.database import AttendanceRepository
 from attendance_app.passkeys import (
     build_authentication_options,
     build_registration_options,
@@ -39,6 +40,23 @@ from attendance_app.services import (
     verify_login_code_for_access_context,
 )
 from attendance_app.utils import parse_hhmm, parse_iso_date, weekday_label
+
+DATA_MANAGEMENT_REPOSITORY_METHODS = (
+    "prepare_data_reset",
+    "execute_data_reset",
+    "record_data_management_audit",
+    "list_data_reset_audit",
+)
+
+# Streamlit can rerun app.py while retaining an imported dependency from the
+# previous deployment. Reload only when that mixed-version condition is detected.
+if not all(
+    hasattr(database_module.AttendanceRepository, method)
+    for method in DATA_MANAGEMENT_REPOSITORY_METHODS
+):
+    database_module = reload(database_module)
+AttendanceRepository = database_module.AttendanceRepository
+SCHEMA_VERSION = database_module.SCHEMA_VERSION
 
 
 def build_course_report_xlsx(**kwargs) -> bytes:
@@ -877,10 +895,26 @@ STUDENT_DEVICE_ERROR_TRANSLATIONS = {
 
 
 @st.cache_resource(show_spinner=False)
-def _get_repository(database_target: str) -> AttendanceRepository:
+def _get_repository(
+    database_target: str,
+    schema_version: str = SCHEMA_VERSION,
+) -> AttendanceRepository:
+    # The explicit version argument prevents Streamlit from returning an instance of
+    # an older repository class after a deployment changes its methods or schema.
+    del schema_version
     repo = AttendanceRepository(database_target, use_pool=True)
     repo.init_schema()
     return repo
+
+
+def _refresh_repository_after_deployment(
+    repo: AttendanceRepository,
+    database_target: str,
+) -> AttendanceRepository:
+    if all(hasattr(repo, method) for method in DATA_MANAGEMENT_REPOSITORY_METHODS):
+        return repo
+    _get_repository.clear()
+    return _get_repository(database_target, SCHEMA_VERSION)
 
 
 @st.cache_data(
@@ -890,7 +924,7 @@ def _get_repository(database_target: str) -> AttendanceRepository:
     refresh_mode="background",
 )
 def _cached_list_courses(database_target: str) -> list[dict]:
-    return _get_repository(database_target).list_courses()
+    return _get_repository(database_target, SCHEMA_VERSION).list_courses()
 
 
 @st.cache_data(
@@ -900,7 +934,7 @@ def _cached_list_courses(database_target: str) -> list[dict]:
     refresh_mode="background",
 )
 def _cached_get_course(database_target: str, course_id: int) -> dict | None:
-    return _get_repository(database_target).get_course(course_id)
+    return _get_repository(database_target, SCHEMA_VERSION).get_course(course_id)
 
 
 @st.cache_data(
@@ -910,7 +944,7 @@ def _cached_get_course(database_target: str, course_id: int) -> dict | None:
     refresh_mode="background",
 )
 def _cached_get_student(database_target: str, student_id: int) -> dict | None:
-    return _get_repository(database_target).get_student(student_id)
+    return _get_repository(database_target, SCHEMA_VERSION).get_student(student_id)
 
 
 @st.cache_data(
@@ -920,7 +954,9 @@ def _cached_get_student(database_target: str, student_id: int) -> dict | None:
     refresh_mode="background",
 )
 def _cached_list_students(database_target: str, course_id: int) -> list[dict]:
-    return _get_repository(database_target).list_students_for_course(course_id)
+    return _get_repository(database_target, SCHEMA_VERSION).list_students_for_course(
+        course_id
+    )
 
 
 @st.cache_data(
@@ -930,7 +966,9 @@ def _cached_list_students(database_target: str, course_id: int) -> list[dict]:
     refresh_mode="background",
 )
 def _cached_list_schedules(database_target: str, course_id: int) -> list[dict]:
-    return _get_repository(database_target).list_schedules_for_course(course_id)
+    return _get_repository(database_target, SCHEMA_VERSION).list_schedules_for_course(
+        course_id
+    )
 
 
 @st.cache_data(
@@ -944,7 +982,7 @@ def _cached_list_course_attendance(
     course_id: int,
     limit: int,
 ) -> list[dict]:
-    return _get_repository(database_target).list_course_attendance(
+    return _get_repository(database_target, SCHEMA_VERSION).list_course_attendance(
         course_id=course_id,
         limit=limit,
     )
@@ -962,7 +1000,7 @@ def _cached_list_student_attendance(
     student_id: int,
     limit: int,
 ) -> list[dict]:
-    return _get_repository(database_target).list_attendance(
+    return _get_repository(database_target, SCHEMA_VERSION).list_attendance(
         course_id=course_id,
         student_id=student_id,
         limit=limit,
@@ -976,7 +1014,9 @@ def _cached_list_student_attendance(
     refresh_mode="background",
 )
 def _cached_attendance_counts(database_target: str, course_id: int) -> dict[int, int]:
-    return _get_repository(database_target).count_attendance_by_student_for_course(
+    return _get_repository(
+        database_target, SCHEMA_VERSION
+    ).count_attendance_by_student_for_course(
         course_id=course_id
     )
 
@@ -992,7 +1032,7 @@ def _cached_manager_today_snapshot(
     course_ids: tuple[int, ...],
     attendance_date: str,
 ) -> dict:
-    return _get_repository(database_target).get_manager_today_snapshot(
+    return _get_repository(database_target, SCHEMA_VERSION).get_manager_today_snapshot(
         course_ids=list(course_ids),
         attendance_date=attendance_date,
     )
@@ -1011,7 +1051,7 @@ def _cached_attendance_exists(
     schedule_id: int,
     attendance_date: str,
 ) -> bool:
-    return _get_repository(database_target).attendance_exists(
+    return _get_repository(database_target, SCHEMA_VERSION).attendance_exists(
         course_id=course_id,
         student_id=student_id,
         schedule_id=schedule_id,
@@ -1030,7 +1070,7 @@ def _cached_list_proxy_alerts(
     course_id: int,
     limit: int,
 ) -> list[dict]:
-    return _get_repository(database_target).list_proxy_alerts(
+    return _get_repository(database_target, SCHEMA_VERSION).list_proxy_alerts(
         course_id=course_id,
         limit=limit,
     )
@@ -1047,7 +1087,7 @@ def _cached_list_device_audit_events(
     course_id: int,
     limit: int,
 ) -> list[dict]:
-    return _get_repository(database_target).list_device_audit_events(
+    return _get_repository(database_target, SCHEMA_VERSION).list_device_audit_events(
         course_id=course_id,
         limit=limit,
     )
@@ -1060,7 +1100,9 @@ def _cached_list_device_audit_events(
     refresh_mode="background",
 )
 def _cached_report_attendance(database_target: str, course_id: int) -> list[dict]:
-    return _get_repository(database_target).list_course_attendance_for_report(
+    return _get_repository(
+        database_target, SCHEMA_VERSION
+    ).list_course_attendance_for_report(
         course_id=course_id
     )
 
@@ -1072,7 +1114,9 @@ def _cached_report_attendance(database_target: str, course_id: int) -> list[dict
     refresh_mode="background",
 )
 def _cached_report_security_alerts(database_target: str, course_id: int) -> list[dict]:
-    return _get_repository(database_target).list_proxy_alerts_for_report(
+    return _get_repository(
+        database_target, SCHEMA_VERSION
+    ).list_proxy_alerts_for_report(
         course_id=course_id
     )
 
@@ -1084,7 +1128,9 @@ def _cached_report_security_alerts(database_target: str, course_id: int) -> list
     refresh_mode="background",
 )
 def _cached_report_device_audit(database_target: str, course_id: int) -> list[dict]:
-    return _get_repository(database_target).list_device_audit_events_for_report(
+    return _get_repository(
+        database_target, SCHEMA_VERSION
+    ).list_device_audit_events_for_report(
         course_id=course_id
     )
 
@@ -1096,7 +1142,9 @@ def _cached_report_device_audit(database_target: str, course_id: int) -> list[di
     refresh_mode="background",
 )
 def _cached_report_otp_activity(database_target: str, course_id: int) -> list[dict]:
-    return _get_repository(database_target).list_otp_activity_for_report(course_id=course_id)
+    return _get_repository(database_target, SCHEMA_VERSION).list_otp_activity_for_report(
+        course_id=course_id
+    )
 
 
 @st.cache_data(
@@ -1145,7 +1193,7 @@ def _cached_eligibility_rows(
     schedules: list[dict],
     attendance_counts: dict[int, int],
 ) -> list[dict[str, object]]:
-    repo = _get_repository(database_target)
+    repo = _get_repository(database_target, SCHEMA_VERSION)
     settings = SimpleNamespace(app_timezone=timezone_name)
     rows = []
     for student in students:
@@ -1227,7 +1275,8 @@ def main() -> None:
 
     settings = load_settings(_safe_secrets())
     try:
-        repo = _get_repository(settings.database_target)
+        repo = _get_repository(settings.database_target, SCHEMA_VERSION)
+        repo = _refresh_repository_after_deployment(repo, settings.database_target)
     except RuntimeError as error:
         st.error(str(error))
         st.stop()
@@ -2067,6 +2116,20 @@ def _render_manager_settings(
         "Back up, reset, and audit application data.",
         settings,
     )
+    missing_methods = [
+        method
+        for method in DATA_MANAGEMENT_REPOSITORY_METHODS
+        if not hasattr(repo, method)
+    ]
+    if missing_methods:
+        st.error(
+            "The manager data tools are still loading after an application update. "
+            "Reload the app to finish the update; no data has been changed."
+        )
+        if st.button("Reload manager data tools", type="primary"):
+            _get_repository.clear()
+            st.rerun()
+        return
     maintenance_col, backup_col = st.columns([1.25, 0.75], gap="large")
     with maintenance_col:
         _render_section_title("Data management", "Prepared resets are atomic")
