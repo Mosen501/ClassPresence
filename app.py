@@ -12,7 +12,19 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from attendance_app import components as components_module
 from attendance_app import database as database_module
+from attendance_app import services as services_module
+
+# Streamlit Cloud may rerun app.py while imported local modules still come from
+# the previous deployment. Refresh dependencies before importing newly added APIs.
+if not hasattr(database_module.AttendanceRepository, "list_location_attempt_events"):
+    database_module = reload(database_module)
+if not hasattr(components_module, "manager_geo_capture"):
+    components_module = reload(components_module)
+if not hasattr(services_module, "record_location_attempt"):
+    services_module = reload(services_module)
+
 from attendance_app.browser_keys import build_browser_key_options
 from attendance_app.components import (
     geo_capture,
