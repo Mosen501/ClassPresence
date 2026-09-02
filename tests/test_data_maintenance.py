@@ -98,11 +98,32 @@ class DataMaintenanceTestCase(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_course_attendance_reset_preserves_roster_and_timetable(self) -> None:
+        self.repo.create_location_attempt_event(
+            course_id=self.course_a,
+            student_id=int(self.exclusive["id"]),
+            schedule_id=self.schedule_a,
+            attendance_date="2026-09-01",
+            attempt_type="attendance",
+            outcome="accepted",
+            reason_code="attendance_recorded",
+            message="Attendance recorded",
+            latitude=1.0,
+            longitude=1.0,
+            accuracy_m=5.0,
+            distance_m=1.0,
+            radius_m=50.0,
+            captured_at=self.created_at,
+            sample_count=1,
+            platform="iPhone",
+            browser_family="Safari",
+            created_at=self.created_at,
+        )
         preview = self.repo.prepare_data_reset(
             action="course_attendance",
             course_id=self.course_a,
         )
         self.assertEqual(preview["counts"]["attendance_records"], 2)
+        self.assertEqual(preview["counts"]["location_attempt_events"], 1)
         self.assertEqual(len(preview["tables"]["attendance_records"]), 2)
 
         result = self.repo.execute_data_reset(
@@ -114,6 +135,9 @@ class DataMaintenanceTestCase(unittest.TestCase):
 
         self.assertEqual(result["scope_identifier"], "RESET101")
         self.assertEqual(self.repo.list_course_attendance(course_id=self.course_a), [])
+        self.assertEqual(
+            self.repo.list_location_attempt_events(course_id=self.course_a), []
+        )
         self.assertEqual(len(self.repo.list_students_for_course(self.course_a)), 2)
         self.assertEqual(len(self.repo.list_schedules_for_course(self.course_a)), 1)
         self.assertEqual(len(self.repo.list_course_attendance(course_id=self.course_b)), 1)

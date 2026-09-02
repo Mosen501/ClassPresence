@@ -6,6 +6,10 @@ import streamlit.components.v1 as components
 
 _COMPONENT_PATH = Path(__file__).resolve().parent / "frontend" / "geo_capture"
 _geo_capture = components.declare_component("geo_capture", path=str(_COMPONENT_PATH))
+_manager_geo_capture = components.declare_component(
+    "manager_geo_capture",
+    path=str(_COMPONENT_PATH),
+)
 _LOCATION_PICKER_PATH = Path(__file__).resolve().parent / "frontend" / "location_picker"
 _location_picker = components.declare_component(
     "location_picker",
@@ -17,6 +21,15 @@ _passkey = components.declare_component("passkey", path=str(_PASSKEY_PATH))
 
 def geo_capture(button_label: str, key: str):
     return _geo_capture(buttonLabel=button_label, key=key, default=None)
+
+
+def manager_geo_capture(button_label: str, key: str):
+    return _manager_geo_capture(
+        buttonLabel=button_label,
+        locale="en",
+        key=key,
+        default=None,
+    )
 
 
 def location_picker(

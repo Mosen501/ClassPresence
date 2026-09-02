@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover - sqlite-only local/test environments
 
 
 Record = dict[str, Any]
-SCHEMA_VERSION = "2026-09-01-2"
+SCHEMA_VERSION = "2026-09-01-3"
 
 DATA_RESET_ACTIONS = frozenset(
     {
@@ -205,6 +205,45 @@ _SQLITE_SCHEMA_STATEMENTS = (
         created_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS location_attempt_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        schedule_id INTEGER REFERENCES course_schedules(id) ON DELETE SET NULL,
+        attendance_date TEXT NOT NULL,
+        attempt_type TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        message TEXT NOT NULL,
+        latitude REAL,
+        longitude REAL,
+        accuracy_m REAL,
+        distance_m REAL,
+        radius_m REAL NOT NULL,
+        captured_at TEXT,
+        sample_count INTEGER,
+        platform TEXT NOT NULL DEFAULT '',
+        browser_family TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        recovered_at TEXT,
+        coordinates_redacted_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS classroom_location_calibrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        previous_latitude REAL NOT NULL,
+        previous_longitude REAL NOT NULL,
+        new_latitude REAL NOT NULL,
+        new_longitude REAL NOT NULL,
+        reading_count INTEGER NOT NULL,
+        median_accuracy_m REAL NOT NULL,
+        actor_identifier TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
 )
 
 _POSTGRES_SCHEMA_STATEMENTS = (
@@ -373,6 +412,45 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         created_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS location_attempt_events (
+        id BIGSERIAL PRIMARY KEY,
+        course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id BIGINT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        schedule_id BIGINT REFERENCES course_schedules(id) ON DELETE SET NULL,
+        attendance_date TEXT NOT NULL,
+        attempt_type TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        message TEXT NOT NULL,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        accuracy_m DOUBLE PRECISION,
+        distance_m DOUBLE PRECISION,
+        radius_m DOUBLE PRECISION NOT NULL,
+        captured_at TEXT,
+        sample_count INTEGER,
+        platform TEXT NOT NULL DEFAULT '',
+        browser_family TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        recovered_at TEXT,
+        coordinates_redacted_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS classroom_location_calibrations (
+        id BIGSERIAL PRIMARY KEY,
+        course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        previous_latitude DOUBLE PRECISION NOT NULL,
+        previous_longitude DOUBLE PRECISION NOT NULL,
+        new_latitude DOUBLE PRECISION NOT NULL,
+        new_longitude DOUBLE PRECISION NOT NULL,
+        reading_count INTEGER NOT NULL,
+        median_accuracy_m DOUBLE PRECISION NOT NULL,
+        actor_identifier TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -490,6 +568,10 @@ class AttendanceRepository:
                     self._sql("DELETE FROM attendance_records WHERE course_id = ?"),
                     (course_id,),
                 )
+                connection.execute(
+                    self._sql("DELETE FROM location_attempt_events WHERE course_id = ?"),
+                    (course_id,),
+                )
             elif action == "course_timetable":
                 connection.execute(
                     self._sql("DELETE FROM attendance_records WHERE course_id = ?"),
@@ -503,6 +585,10 @@ class AttendanceRepository:
                     self._sql(
                         "DELETE FROM pending_browser_enrollments WHERE course_id = ?"
                     ),
+                    (course_id,),
+                )
+                connection.execute(
+                    self._sql("DELETE FROM location_attempt_events WHERE course_id = ?"),
                     (course_id,),
                 )
                 connection.execute(
@@ -520,6 +606,7 @@ class AttendanceRepository:
                     "otp_codes",
                     "pending_browser_enrollments",
                     "proxy_alerts",
+                    "location_attempt_events",
                     "course_schedules",
                     "device_audit_events",
                 ):
@@ -556,6 +643,13 @@ class AttendanceRepository:
                 connection.execute(
                     self._sql(
                         "DELETE FROM attendance_records WHERE course_id = ? AND student_id = ?"
+                    ),
+                    (course_id, student_id),
+                )
+                connection.execute(
+                    self._sql(
+                        "DELETE FROM location_attempt_events "
+                        "WHERE course_id = ? AND student_id = ?"
                     ),
                     (course_id, student_id),
                 )
@@ -611,6 +705,7 @@ class AttendanceRepository:
                     "otp_codes",
                     "pending_browser_enrollments",
                     "proxy_alerts",
+                    "location_attempt_events",
                     "course_schedules",
                     "device_audit_events",
                 ):
@@ -621,6 +716,8 @@ class AttendanceRepository:
                     "otp_codes",
                     "pending_browser_enrollments",
                     "proxy_alerts",
+                    "location_attempt_events",
+                    "classroom_location_calibrations",
                     "course_students",
                     "course_schedules",
                     "registered_devices",
@@ -743,10 +840,16 @@ class AttendanceRepository:
 
         tables: dict[str, list[Record]] = {}
         if action == "course_attendance":
-            tables["attendance_records"] = fetch(
-                "SELECT * FROM attendance_records WHERE course_id = ?",
-                (course_id,),
-            )
+            tables = {
+                "attendance_records": fetch(
+                    "SELECT * FROM attendance_records WHERE course_id = ?",
+                    (course_id,),
+                ),
+                "location_attempt_events": fetch(
+                    "SELECT * FROM location_attempt_events WHERE course_id = ?",
+                    (course_id,),
+                ),
+            }
         elif action == "course_timetable":
             tables = {
                 "attendance_records": fetch(
@@ -757,6 +860,10 @@ class AttendanceRepository:
                 ),
                 "pending_browser_enrollments": fetch(
                     "SELECT * FROM pending_browser_enrollments WHERE course_id = ?",
+                    (course_id,),
+                ),
+                "location_attempt_events": fetch(
+                    "SELECT * FROM location_attempt_events WHERE course_id = ?",
                     (course_id,),
                 ),
                 "course_schedules": fetch(
@@ -774,6 +881,7 @@ class AttendanceRepository:
                 "otp_codes",
                 "pending_browser_enrollments",
                 "proxy_alerts",
+                "location_attempt_events",
                 "course_schedules",
                 "device_audit_events",
             ):
@@ -806,6 +914,14 @@ class AttendanceRepository:
                 "device_audit_events": fetch(
                     "SELECT * FROM device_audit_events WHERE course_id = ?", (course_id,)
                 ),
+                "location_attempt_events": fetch(
+                    "SELECT * FROM location_attempt_events WHERE course_id = ?",
+                    (course_id,),
+                ),
+                "classroom_location_calibrations": fetch(
+                    "SELECT * FROM classroom_location_calibrations WHERE course_id = ?",
+                    (course_id,),
+                ),
                 "students": fetch(
                     """
                     SELECT s.*
@@ -831,14 +947,24 @@ class AttendanceRepository:
             else:
                 tables["registered_devices"] = []
         elif action == "student_attendance":
-            tables["attendance_records"] = fetch(
-                """
-                SELECT *
-                FROM attendance_records
-                WHERE course_id = ? AND student_id = ?
-                """,
-                (course_id, student_id),
-            )
+            tables = {
+                "attendance_records": fetch(
+                    """
+                    SELECT *
+                    FROM attendance_records
+                    WHERE course_id = ? AND student_id = ?
+                    """,
+                    (course_id, student_id),
+                ),
+                "location_attempt_events": fetch(
+                    """
+                    SELECT *
+                    FROM location_attempt_events
+                    WHERE course_id = ? AND student_id = ?
+                    """,
+                    (course_id, student_id),
+                ),
+            }
         elif action == "student_device":
             tables = {
                 "registered_devices": fetch(
@@ -877,6 +1003,10 @@ class AttendanceRepository:
                 "device_audit_events": fetch(
                     "SELECT * FROM device_audit_events WHERE student_id = ?", (student_id,)
                 ),
+                "location_attempt_events": fetch(
+                    "SELECT * FROM location_attempt_events WHERE student_id = ?",
+                    (student_id,),
+                ),
             }
         elif action in {"reset_all_students", "reset_all_course_activity", "full_system"}:
             table_names = (
@@ -889,6 +1019,7 @@ class AttendanceRepository:
                     "device_audit_events",
                     "attendance_records",
                     "proxy_alerts",
+                    "location_attempt_events",
                 )
                 if action == "reset_all_students"
                 else (
@@ -898,6 +1029,7 @@ class AttendanceRepository:
                     "device_audit_events",
                     "attendance_records",
                     "proxy_alerts",
+                    "location_attempt_events",
                 )
                 if action == "reset_all_course_activity"
                 else (
@@ -911,6 +1043,8 @@ class AttendanceRepository:
                     "device_audit_events",
                     "attendance_records",
                     "proxy_alerts",
+                    "location_attempt_events",
+                    "classroom_location_calibrations",
                     "data_reset_audit",
                 )
             )
@@ -970,6 +1104,232 @@ class AttendanceRepository:
                 json.dumps(counts, sort_keys=True),
                 created_at,
             ),
+        )
+
+    def create_location_attempt_event(
+        self,
+        *,
+        course_id: int,
+        student_id: int,
+        schedule_id: int | None,
+        attendance_date: str,
+        attempt_type: str,
+        outcome: str,
+        reason_code: str,
+        message: str,
+        latitude: float | None,
+        longitude: float | None,
+        accuracy_m: float | None,
+        distance_m: float | None,
+        radius_m: float,
+        captured_at: str | None,
+        sample_count: int | None,
+        platform: str,
+        browser_family: str,
+        created_at: str,
+        coordinate_cutoff_iso: str | None = None,
+    ) -> int:
+        with self._connection() as connection:
+            if coordinate_cutoff_iso:
+                connection.execute(
+                    self._sql(
+                        """
+                        UPDATE location_attempt_events
+                        SET latitude = NULL,
+                            longitude = NULL,
+                            coordinates_redacted_at = ?
+                        WHERE created_at < ?
+                          AND coordinates_redacted_at IS NULL
+                          AND (latitude IS NOT NULL OR longitude IS NOT NULL)
+                        """
+                    ),
+                    (created_at, coordinate_cutoff_iso),
+                )
+            if outcome == "accepted":
+                connection.execute(
+                    self._sql(
+                        """
+                        UPDATE location_attempt_events
+                        SET recovered_at = ?
+                        WHERE course_id = ?
+                          AND student_id = ?
+                          AND attendance_date = ?
+                          AND outcome <> 'accepted'
+                          AND recovered_at IS NULL
+                          AND created_at <= ?
+                          AND (schedule_id = ? OR schedule_id IS NULL OR ? IS NULL)
+                        """
+                    ),
+                    (
+                        created_at,
+                        course_id,
+                        student_id,
+                        attendance_date,
+                        created_at,
+                        schedule_id,
+                        schedule_id,
+                    ),
+                )
+            query = """
+                INSERT INTO location_attempt_events (
+                    course_id, student_id, schedule_id, attendance_date,
+                    attempt_type, outcome, reason_code, message, latitude,
+                    longitude, accuracy_m, distance_m, radius_m, captured_at,
+                    sample_count, platform, browser_family, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            if self.backend == "postgres":
+                query += " RETURNING id"
+            cursor = connection.execute(
+                self._sql(query),
+                (
+                    course_id,
+                    student_id,
+                    schedule_id,
+                    attendance_date,
+                    attempt_type,
+                    outcome,
+                    reason_code,
+                    message[:500],
+                    latitude,
+                    longitude,
+                    accuracy_m,
+                    distance_m,
+                    radius_m,
+                    captured_at,
+                    sample_count,
+                    platform[:100],
+                    browser_family[:50],
+                    created_at,
+                ),
+            )
+            if self.backend == "postgres":
+                row = cursor.fetchone()
+                if row is None:
+                    raise RuntimeError("Expected a location-event row ID.")
+                return int(row["id"])
+            return int(cursor.lastrowid)
+
+    def list_location_attempt_events(
+        self,
+        *,
+        course_id: int,
+        created_after: str | None = None,
+        limit: int = 20000,
+    ) -> list[Record]:
+        parameters: list[Any] = [course_id]
+        date_filter = ""
+        if created_after:
+            date_filter = "AND la.created_at >= ?"
+            parameters.append(created_after)
+        parameters.append(limit)
+        return self._fetchall(
+            f"""
+            SELECT
+                la.*,
+                s.full_name,
+                s.university_id,
+                cs.label AS schedule_label,
+                cs.start_time AS schedule_start_time,
+                cs.end_time AS schedule_end_time
+            FROM location_attempt_events la
+            INNER JOIN students s ON s.id = la.student_id
+            LEFT JOIN course_schedules cs ON cs.id = la.schedule_id
+            WHERE la.course_id = ?
+              {date_filter}
+            ORDER BY la.created_at DESC, la.id DESC
+            LIMIT ?
+            """,
+            parameters,
+        )
+
+    def anonymize_location_coordinates_before(
+        self,
+        *,
+        cutoff_iso: str,
+        redacted_at: str,
+    ) -> int:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                self._sql(
+                    """
+                    UPDATE location_attempt_events
+                    SET latitude = NULL,
+                        longitude = NULL,
+                        coordinates_redacted_at = ?
+                    WHERE created_at < ?
+                      AND coordinates_redacted_at IS NULL
+                      AND (latitude IS NOT NULL OR longitude IS NOT NULL)
+                    """
+                ),
+                (redacted_at, cutoff_iso),
+            )
+            return int(cursor.rowcount or 0)
+
+    def apply_course_location_calibration(
+        self,
+        *,
+        course_id: int,
+        latitude: float,
+        longitude: float,
+        reading_count: int,
+        median_accuracy_m: float,
+        actor_identifier: str,
+        created_at: str,
+    ) -> None:
+        with self._connection() as connection:
+            course = connection.execute(
+                self._sql("SELECT latitude, longitude FROM courses WHERE id = ?"),
+                (course_id,),
+            ).fetchone()
+            if course is None:
+                raise ValueError("Course was not found.")
+            connection.execute(
+                self._sql(
+                    "UPDATE courses SET latitude = ?, longitude = ? WHERE id = ?"
+                ),
+                (latitude, longitude, course_id),
+            )
+            connection.execute(
+                self._sql(
+                    """
+                    INSERT INTO classroom_location_calibrations (
+                        course_id, previous_latitude, previous_longitude,
+                        new_latitude, new_longitude, reading_count,
+                        median_accuracy_m, actor_identifier, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                (
+                    course_id,
+                    float(course["latitude"]),
+                    float(course["longitude"]),
+                    latitude,
+                    longitude,
+                    reading_count,
+                    median_accuracy_m,
+                    actor_identifier,
+                    created_at,
+                ),
+            )
+
+    def list_course_location_calibrations(
+        self,
+        *,
+        course_id: int,
+        limit: int = 100,
+    ) -> list[Record]:
+        return self._fetchall(
+            """
+            SELECT *
+            FROM classroom_location_calibrations
+            WHERE course_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (course_id, limit),
         )
 
     def create_course(
@@ -2510,6 +2870,32 @@ class AttendanceRepository:
             """
             CREATE INDEX IF NOT EXISTS ix_data_reset_audit_created
             ON data_reset_audit (created_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_location_attempt_course_created
+            ON location_attempt_events (course_id, created_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_location_attempt_course_reason
+            ON location_attempt_events (course_id, reason_code, created_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_location_attempt_student_window
+            ON location_attempt_events (
+                student_id, course_id, attendance_date, schedule_id, created_at
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_location_calibration_course_created
+            ON classroom_location_calibrations (course_id, created_at)
             """
         )
 

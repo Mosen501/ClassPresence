@@ -14,6 +14,7 @@ from attendance_app.browser_keys import (
 )
 from attendance_app.config import Settings
 from attendance_app.database import AttendanceRepository
+from attendance_app.location_diagnostics import browser_family
 from attendance_app.passkeys import (
     complete_authentication,
     complete_registration,
@@ -69,6 +70,132 @@ class StudentAccessContext:
 
 
 PORTAL_SESSION_HOURS = 12
+
+
+def record_location_attempt(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    course,
+    student,
+    geolocation_payload: dict,
+    attempt_type: str,
+    success: bool,
+    message: str,
+    schedule=None,
+) -> None:
+    """Persist one privacy-limited location outcome without affecting attendance flow."""
+    now = now_in_app_timezone(settings)
+    active_schedule = schedule
+    if active_schedule is None and _course_is_active_today(course, now):
+        active_schedule = find_active_schedule(
+            repo.list_schedules_for_course(int(course["id"])),
+            now,
+        )
+    reason_code = _location_reason_code(
+        geolocation_payload,
+        success=success,
+        message=message,
+        attempt_type=attempt_type,
+    )
+    if success:
+        outcome = "accepted"
+    elif reason_code in {"device_rejected", "already_attended"}:
+        outcome = "blocked"
+    elif reason_code in {"permission_denied", "timeout", "unavailable", "unsupported"}:
+        outcome = "error"
+    else:
+        outcome = "rejected"
+
+    latitude = _optional_float(geolocation_payload.get("latitude"))
+    longitude = _optional_float(geolocation_payload.get("longitude"))
+    distance_m = None
+    if latitude is not None and longitude is not None:
+        distance_m = haversine_distance_m(
+            float(course["latitude"]),
+            float(course["longitude"]),
+            latitude,
+            longitude,
+        )
+    try:
+        sample_count = int(geolocation_payload.get("sample_count"))
+    except (TypeError, ValueError):
+        sample_count = None
+    try:
+        repo.create_location_attempt_event(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            schedule_id=(
+                int(active_schedule["id"]) if active_schedule is not None else None
+            ),
+            attendance_date=now.date().isoformat(),
+            attempt_type=attempt_type,
+            outcome=outcome,
+            reason_code=reason_code,
+            message=message,
+            latitude=latitude,
+            longitude=longitude,
+            accuracy_m=_optional_float(geolocation_payload.get("accuracy_m")),
+            distance_m=distance_m,
+            radius_m=float(course["radius_m"]),
+            captured_at=(
+                str(geolocation_payload.get("captured_at"))
+                if geolocation_payload.get("captured_at")
+                else None
+            ),
+            sample_count=sample_count,
+            platform=str(geolocation_payload.get("platform") or ""),
+            browser_family=browser_family(
+                str(geolocation_payload.get("user_agent") or "")
+            ),
+            created_at=now.isoformat(),
+            coordinate_cutoff_iso=(now - timedelta(days=30)).isoformat(),
+        )
+    except Exception:
+        # Diagnostics must never prevent device registration or attendance.
+        return
+
+
+def _location_reason_code(
+    payload: dict,
+    *,
+    success: bool,
+    message: str,
+    attempt_type: str,
+) -> str:
+    if success:
+        return "attendance_recorded" if attempt_type == "attendance" else "accepted"
+    structured = str(payload.get("error_code") or "").strip().lower()
+    if structured in {"permission_denied", "timeout", "unavailable", "unsupported"}:
+        return structured
+    normalized = message.lower()
+    if "not in class" in normalized or "outside" in normalized and "active dates" not in normalized:
+        return "outside_radius"
+    if "accuracy" in normalized:
+        return "poor_accuracy"
+    if "permission" in normalized or "access was denied" in normalized:
+        return "permission_denied"
+    if "timed out" in normalized or "timeout" in normalized:
+        return "timeout"
+    if "does not support geolocation" in normalized or "unsupported" in normalized:
+        return "unsupported"
+    if "unable to retrieve" in normalized or "unavailable" in normalized:
+        return "unavailable"
+    if "expired" in normalized and "location" in normalized:
+        return "stale"
+    if "invalid location coordinates" in normalized:
+        return "invalid_coordinates"
+    if "location verification data is incomplete" in normalized:
+        return "invalid_payload"
+    if "outside its active dates" in normalized:
+        return "course_inactive"
+    if "closed right now" in normalized or "no class is active" in normalized:
+        return "no_active_window"
+    if "already been stamped" in normalized:
+        return "already_attended"
+    if "device" in normalized:
+        return "device_rejected"
+    return "invalid_payload"
 
 
 def otp_delivery_configuration_error(settings: Settings) -> str | None:

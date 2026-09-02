@@ -29,6 +29,13 @@ PASSKEY_COMPONENT_PATH = (
     / "passkey"
     / "index.html"
 )
+GEO_COMPONENT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "attendance_app"
+    / "frontend"
+    / "geo_capture"
+    / "index.html"
+)
 
 
 class AppNavigationTestCase(unittest.TestCase):
@@ -51,6 +58,32 @@ class AppNavigationTestCase(unittest.TestCase):
         self.assertNotIn('key="submit_attendance"', app_source)
         self.assertNotIn('"تحديد موقعي الحالي"', app_source)
         self.assertEqual(app_source.count("resolve_active_student_session("), 1)
+
+    def test_location_component_reports_structured_browser_failures(self) -> None:
+        component_html = GEO_COMPONENT_PATH.read_text()
+
+        for reason in ("permission_denied", "timeout", "unavailable", "unsupported"):
+            self.assertIn(f'"{reason}"', component_html)
+        self.assertIn("error_code: errorCode", component_html)
+
+    def test_manager_location_diagnostics_exposes_full_workflow(self) -> None:
+        app_source = APP_PATH.read_text()
+
+        self.assertIn("Location", MANAGER_SECTIONS)
+        for message in (
+            "Location diagnostics",
+            "Outside radius",
+            "Permission denied",
+            "GPS timeout",
+            "Classroom reference",
+            "Instructor calibration",
+            "Apply calibrated classroom point",
+            "Prepare location diagnostics Excel",
+            "automatically removed after 30 days",
+        ):
+            self.assertIn(message, app_source)
+        self.assertIn("repo.anonymize_location_coordinates_before(", app_source)
+        self.assertIn("analyze_classroom_reference(course, events)", app_source)
 
     def test_repository_initialization_is_cached_as_a_resource(self) -> None:
         app_source = APP_PATH.read_text()
@@ -125,6 +158,75 @@ class AppNavigationTestCase(unittest.TestCase):
                 self.assertEqual(package["scope_identifier"], "SET101")
                 self.assertTrue(package["backup_bytes"].startswith(b"{"))
                 self.assertIn("Execute permanent reset", [button.label for button in app.button])
+
+    def test_manager_location_page_renders_recorded_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "attendance.db")
+            repo = AttendanceRepository(database_path)
+            repo.init_schema()
+            repo.create_course(
+                code="GEO101",
+                title="Geolocation",
+                start_date="2026-09-01",
+                end_date="2026-12-01",
+                total_meetings=10,
+                latitude=1.0,
+                longitude=1.0,
+                radius_m=50.0,
+                absence_limit_pct=20.0,
+                created_at="2026-09-01T09:00:00+03:00",
+            )
+            course = repo.get_course_by_code("GEO101")
+            assert course is not None
+            repo.add_student_to_course(
+                course_id=int(course["id"]),
+                full_name="Location Student",
+                university_id="GEO-STUDENT",
+                email="geo@example.edu",
+                phone="",
+                created_at="2026-09-01T09:00:00+03:00",
+            )
+            student = repo.get_student_for_course(int(course["id"]), "GEO-STUDENT")
+            assert student is not None
+            repo.create_location_attempt_event(
+                course_id=int(course["id"]),
+                student_id=int(student["id"]),
+                schedule_id=None,
+                attendance_date="2026-09-01",
+                attempt_type="attendance",
+                outcome="rejected",
+                reason_code="outside_radius",
+                message="Outside radius",
+                latitude=1.001,
+                longitude=1.001,
+                accuracy_m=10.0,
+                distance_m=100.0,
+                radius_m=50.0,
+                captured_at="2026-09-01T09:00:00+03:00",
+                sample_count=1,
+                platform="iPhone",
+                browser_family="Safari",
+                created_at="2026-09-01T09:00:00+03:00",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "ATTENDANCE_DB_PATH": database_path,
+                    "APP_ENV": "development",
+                },
+                clear=False,
+            ):
+                app = AppTest.from_file(str(APP_PATH)).run(timeout=30)
+                app.session_state["active_role"] = "manager"
+                app.session_state["manager_auth"] = {"username": "manager"}
+                app.session_state["manager_section"] = "Location"
+                app.run(timeout=30)
+
+                self.assertEqual(len(app.exception), 0)
+                self.assertIn(
+                    "Prepare location diagnostics Excel",
+                    [button.label for button in app.button],
+                )
 
     def test_student_localization_keeps_internal_navigation_values(self) -> None:
         self.assertEqual(STUDENT_SECTIONS, ["Check in", "Status", "History"])

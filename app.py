@@ -4,6 +4,7 @@ import json
 from datetime import date, datetime, timedelta
 from html import escape
 from importlib import reload
+from statistics import median
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -13,8 +14,19 @@ import streamlit as st
 
 from attendance_app import database as database_module
 from attendance_app.browser_keys import build_browser_key_options
-from attendance_app.components import geo_capture, location_picker, passkey_action
+from attendance_app.components import (
+    geo_capture,
+    location_picker,
+    manager_geo_capture,
+    passkey_action,
+)
 from attendance_app.config import load_settings
+from attendance_app.location_diagnostics import (
+    LOCATION_REASON_LABELS,
+    analyze_classroom_reference,
+    build_lecture_location_summary,
+    summarize_location_events,
+)
 from attendance_app.passkeys import (
     build_authentication_options,
     build_registration_options,
@@ -31,6 +43,7 @@ from attendance_app.services import (
     register_student_passkey,
     request_login_code_for_access_context,
     request_student_browser_key_enrollment,
+    record_location_attempt,
     reset_student_device,
     resolve_active_student_session,
     resolve_registered_student_access_context,
@@ -39,13 +52,23 @@ from attendance_app.services import (
     stamp_attendance,
     verify_login_code_for_access_context,
 )
-from attendance_app.utils import parse_hhmm, parse_iso_date, weekday_label
+from attendance_app.utils import (
+    haversine_distance_m,
+    parse_hhmm,
+    parse_iso_date,
+    weekday_label,
+)
 
 DATA_MANAGEMENT_REPOSITORY_METHODS = (
     "prepare_data_reset",
     "execute_data_reset",
     "record_data_management_audit",
     "list_data_reset_audit",
+    "create_location_attempt_event",
+    "list_location_attempt_events",
+    "anonymize_location_coordinates_before",
+    "apply_course_location_calibration",
+    "list_course_location_calibrations",
 )
 
 # Streamlit can rerun app.py while retaining an imported dependency from the
@@ -737,6 +760,7 @@ MANAGER_SECTIONS = [
     "Courses",
     "Students",
     "Attendance",
+    "Location",
     "Security",
     "Reports",
     "Settings",
@@ -744,7 +768,7 @@ MANAGER_SECTIONS = [
 COURSE_RESET_ACTIONS = {
     "course_attendance": (
         "Reset course attendance",
-        "Removes attendance stamps only. The roster, timetable, and registered devices remain.",
+        "Removes attendance stamps and location diagnostics. The roster, timetable, and registered devices remain.",
     ),
     "course_timetable": (
         "Reset timetable",
@@ -766,7 +790,7 @@ COURSE_RESET_ACTIONS = {
 STUDENT_RESET_ACTIONS = {
     "student_attendance": (
         "Reset student attendance",
-        "Removes this student's attendance from the selected course only.",
+        "Removes this student's attendance and location diagnostics from the selected course.",
     ),
     "student_device": (
         "Reset registered device",
@@ -808,6 +832,8 @@ RESET_TABLE_LABELS = {
     "device_audit_events": "Device audit events",
     "attendance_records": "Attendance records",
     "proxy_alerts": "Security alerts",
+    "location_attempt_events": "Location diagnostic events",
+    "classroom_location_calibrations": "Classroom calibration audit",
     "data_reset_audit": "Reset audit events",
 }
 STUDENT_SECTIONS = ["Check in", "Status", "History"]
@@ -1402,6 +1428,8 @@ def _render_manager_workspace(repo: AttendanceRepository, settings) -> None:
                 st.session_state["manager_prepared_report"] = None
                 st.session_state["manager_reset_package"] = None
                 st.session_state["manager_full_backup"] = None
+                st.session_state["manager_location_report"] = None
+                st.session_state["manager_calibration_readings"] = []
                 st.session_state["active_role"] = None
                 st.rerun()
 
@@ -1416,6 +1444,8 @@ def _render_manager_workspace(repo: AttendanceRepository, settings) -> None:
         _render_manager_students(repo, settings, course)
     elif section == "Attendance":
         _render_manager_attendance(repo, settings, course)
+    elif section == "Location":
+        _render_manager_location(repo, settings, course)
     elif section == "Security":
         _render_manager_security(repo, settings, course)
     elif section == "Reports":
@@ -1782,6 +1812,376 @@ def _render_manager_attendance(repo: AttendanceRepository, settings, course) -> 
         hide_index=True,
         lazy=True,
     )
+
+
+@st.fragment
+def _render_manager_location(repo: AttendanceRepository, settings, course) -> None:
+    _render_page_head(
+        "Classroom evidence",
+        "Location diagnostics",
+        "Location failures, recovery rates, classroom-marker analysis, and calibration.",
+        settings,
+    )
+    if course is None:
+        _empty_state("Select a course to review location diagnostics.")
+        return
+
+    _render_course_strip(repo, course)
+    now = now_in_app_timezone(settings)
+    repo.anonymize_location_coordinates_before(
+        cutoff_iso=(now - timedelta(days=30)).isoformat(),
+        redacted_at=now.isoformat(),
+    )
+    period_days = {
+        "Last 7 days": 7,
+        "Last 30 days": 30,
+        "Last 90 days": 90,
+        "All retained history": None,
+    }
+    selected_period = st.selectbox(
+        "Period",
+        list(period_days),
+        key="manager_location_period",
+    )
+    days = period_days[selected_period]
+    created_after = (now - timedelta(days=days)).isoformat() if days else None
+    events = repo.list_location_attempt_events(
+        course_id=int(course["id"]),
+        created_after=created_after,
+    )
+    summary = summarize_location_events(events)
+    reason_counts = summary["reason_counts"]
+    affected = summary["affected_students"]
+    _render_metrics(
+        [
+            ("Attempts", summary["total_attempts"], f"{summary['unique_students']} students"),
+            (
+                "Outside radius",
+                reason_counts.get("outside_radius", 0),
+                f"{affected.get('outside_radius', 0)} students",
+            ),
+            (
+                f"Accuracy > {settings.location_max_accuracy_m:.0f}m",
+                reason_counts.get("poor_accuracy", 0),
+                f"{affected.get('poor_accuracy', 0)} students",
+            ),
+            (
+                "Permission denied",
+                reason_counts.get("permission_denied", 0),
+                f"{affected.get('permission_denied', 0)} students",
+            ),
+            (
+                "GPS timeout",
+                reason_counts.get("timeout", 0),
+                f"{affected.get('timeout', 0)} students",
+            ),
+            (
+                "Location success",
+                f"{summary['success_rate']:.1f}%",
+                f"{summary['recovered_failures']} failures later recovered",
+            ),
+        ]
+    )
+
+    if not events:
+        st.info(
+            "No location attempts have been recorded for this period. Collection begins with "
+            "the newly deployed diagnostics."
+        )
+
+    failures_col, reference_col = st.columns([1.1, 0.9], gap="large")
+    with failures_col:
+        _render_section_title("Failure rates", "Attempts and affected students")
+        denominator = max(int(summary["diagnostic_attempts"]), 1)
+        failure_rows = []
+        for reason in (
+            "outside_radius",
+            "poor_accuracy",
+            "permission_denied",
+            "timeout",
+            "unavailable",
+            "unsupported",
+            "stale",
+        ):
+            count = int(reason_counts.get(reason, 0))
+            failure_rows.append(
+                {
+                    "Reason": LOCATION_REASON_LABELS[reason],
+                    "Students": int(affected.get(reason, 0)),
+                    "Attempts": count,
+                    "Rate": f"{(count / denominator) * 100:.1f}%",
+                }
+            )
+        st.dataframe(failure_rows, width="stretch", hide_index=True)
+
+    reference_analysis = analyze_classroom_reference(course, events)
+    with reference_col:
+        _render_section_title("Classroom reference", "Advisory analysis")
+        status = reference_analysis["status"]
+        if status == "review":
+            st.warning(reference_analysis["message"])
+        elif status == "consistent":
+            st.success(reference_analysis["message"])
+        else:
+            st.info(reference_analysis["message"])
+        offset = reference_analysis.get("offset_m")
+        _render_metrics(
+            [
+                (
+                    "Observed offset",
+                    f"{float(offset):.1f}m" if offset is not None else "—",
+                    "from configured marker",
+                ),
+                (
+                    "Quality readings",
+                    reference_analysis["sample_count"],
+                    f"across {reference_analysis['session_count']} lectures",
+                ),
+            ],
+            compact=True,
+        )
+        if reference_analysis.get("observed_latitude") is not None:
+            st.dataframe(
+                [
+                    {
+                        "Point": "Configured",
+                        "Latitude": float(course["latitude"]),
+                        "Longitude": float(course["longitude"]),
+                    },
+                    {
+                        "Point": "Observed median",
+                        "Latitude": reference_analysis["observed_latitude"],
+                        "Longitude": reference_analysis["observed_longitude"],
+                    },
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+
+    _render_section_title("Lecture diagnostics", "Location outcomes by window")
+    lecture_rows = build_lecture_location_summary(events)
+    if lecture_rows:
+        st.dataframe(
+            [
+                {
+                    "Date": row["attendance_date"],
+                    "Window": row["schedule_label"],
+                    "Attempts": row["total_attempts"],
+                    "Students": row["unique_students"],
+                    "Accepted": row["accepted"],
+                    "Outside": row["reason_counts"].get("outside_radius", 0),
+                    "Poor accuracy": row["reason_counts"].get("poor_accuracy", 0),
+                    "Denied": row["reason_counts"].get("permission_denied", 0),
+                    "Timeout": row["reason_counts"].get("timeout", 0),
+                    "Success": f"{row['success_rate']:.1f}%",
+                }
+                for row in lecture_rows
+            ],
+            width="stretch",
+            hide_index=True,
+            lazy=True,
+        )
+    else:
+        _empty_state("No lecture-level location data is available yet.")
+
+    detail_col, calibration_col = st.columns([1.35, 0.65], gap="large")
+    with detail_col:
+        _render_section_title("Attempt log", f"{len(events)} retained events")
+        if events:
+            st.dataframe(
+                [
+                    {
+                        "Time": str(row["created_at"])[:19],
+                        "Student": row["full_name"],
+                        "Student ID": row["university_id"],
+                        "Window": row.get("schedule_label") or "",
+                        "Type": str(row["attempt_type"]).title(),
+                        "Outcome": str(row["outcome"]).title(),
+                        "Reason": LOCATION_REASON_LABELS.get(
+                            str(row["reason_code"]), str(row["reason_code"])
+                        ),
+                        "Accuracy": (
+                            f"{float(row['accuracy_m']):.1f}m"
+                            if row.get("accuracy_m") is not None
+                            else "—"
+                        ),
+                        "Distance": (
+                            f"{float(row['distance_m']):.1f}m"
+                            if row.get("distance_m") is not None
+                            else "—"
+                        ),
+                        "Device": row.get("platform") or "Unknown",
+                        "Browser": row.get("browser_family") or "Unknown",
+                        "Recovered": "Yes" if row.get("recovered_at") else "No",
+                    }
+                    for row in events
+                ],
+                width="stretch",
+                hide_index=True,
+                lazy=True,
+            )
+        st.caption(
+            "Precise diagnostic-attempt coordinates are automatically removed after 30 days; "
+            "aggregate outcomes and distances remain available."
+        )
+
+    with calibration_col:
+        _render_location_calibration(repo, settings, course)
+
+    calibrations = repo.list_course_location_calibrations(
+        course_id=int(course["id"]),
+        limit=100,
+    )
+    if calibrations:
+        _render_section_title("Calibration audit", f"{len(calibrations)} recorded changes")
+        st.dataframe(
+            [
+                {
+                    "Time": str(row["created_at"])[:19],
+                    "Manager": row["actor_identifier"],
+                    "Readings": row["reading_count"],
+                    "Median accuracy": f"{float(row['median_accuracy_m']):.1f}m",
+                    "Previous": (
+                        f"{float(row['previous_latitude']):.7f}, "
+                        f"{float(row['previous_longitude']):.7f}"
+                    ),
+                    "New": (
+                        f"{float(row['new_latitude']):.7f}, "
+                        f"{float(row['new_longitude']):.7f}"
+                    ),
+                }
+                for row in calibrations
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+    export_signature = (int(course["id"]), selected_period, len(events))
+    prepared_export = st.session_state.get("manager_location_report")
+    if st.button("Prepare location diagnostics Excel", width="stretch"):
+        from attendance_app.location_reports import build_location_diagnostics_xlsx
+
+        st.session_state["manager_location_report"] = {
+            "signature": export_signature,
+            "data": build_location_diagnostics_xlsx(
+                course=course,
+                events=events,
+                calibrations=calibrations,
+                reference_analysis=reference_analysis,
+                generated_at=now.isoformat(),
+            ),
+        }
+        prepared_export = st.session_state["manager_location_report"]
+    if prepared_export and tuple(prepared_export.get("signature", ())) == export_signature:
+        st.download_button(
+            "Download location diagnostics Excel",
+            data=prepared_export["data"],
+            file_name=f"{course['code']}_location_diagnostics.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+            on_click="ignore",
+        )
+
+
+def _render_location_calibration(repo, settings, course) -> None:
+    course_id = int(course["id"])
+    if st.session_state.get("manager_calibration_course_id") != course_id:
+        st.session_state["manager_calibration_course_id"] = course_id
+        st.session_state["manager_calibration_readings"] = []
+        st.session_state["manager_calibration_processed"] = None
+    _render_section_title("Instructor calibration", "Stand inside the classroom")
+    st.caption(
+        "Capture at least three readings. The median point is proposed; nothing changes until "
+        "you explicitly apply it."
+    )
+    payload = manager_geo_capture(
+        "Capture calibration reading",
+        key=f"manager_location_calibration_{course_id}",
+    )
+    if payload:
+        captured_at = payload.get("captured_at")
+        if captured_at != st.session_state.get("manager_calibration_processed"):
+            st.session_state["manager_calibration_processed"] = captured_at
+            if payload.get("error"):
+                st.error(str(payload["error"]))
+            else:
+                accuracy = float(payload.get("accuracy_m") or 0)
+                if accuracy <= 0 or accuracy > settings.location_max_accuracy_m:
+                    st.warning(
+                        f"Reading accuracy must be within "
+                        f"{settings.location_max_accuracy_m:.0f}m. Try again."
+                    )
+                else:
+                    readings = list(st.session_state["manager_calibration_readings"])
+                    readings.append(
+                        {
+                            "latitude": float(payload["latitude"]),
+                            "longitude": float(payload["longitude"]),
+                            "accuracy_m": accuracy,
+                        }
+                    )
+                    st.session_state["manager_calibration_readings"] = readings[-10:]
+
+    readings = st.session_state.get("manager_calibration_readings") or []
+    st.caption(f"{len(readings)} of at least 3 readings captured")
+    if not readings:
+        return
+    proposed_latitude = median(float(row["latitude"]) for row in readings)
+    proposed_longitude = median(float(row["longitude"]) for row in readings)
+    median_accuracy = median(float(row["accuracy_m"]) for row in readings)
+    offset_m = haversine_distance_m(
+        float(course["latitude"]),
+        float(course["longitude"]),
+        proposed_latitude,
+        proposed_longitude,
+    )
+    st.dataframe(
+        [
+            {"Metric": "Median accuracy", "Value": f"{median_accuracy:.1f}m"},
+            {"Metric": "Change from current marker", "Value": f"{offset_m:.1f}m"},
+            {"Metric": "Proposed latitude", "Value": f"{proposed_latitude:.7f}"},
+            {"Metric": "Proposed longitude", "Value": f"{proposed_longitude:.7f}"},
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+    confirm = st.checkbox(
+        "I am inside the classroom and reviewed the proposed point.",
+        key=f"confirm_calibration_{course_id}",
+    )
+    if st.button(
+        "Apply calibrated classroom point",
+        type="primary",
+        width="stretch",
+        disabled=len(readings) < 3 or not confirm,
+        key=f"apply_calibration_{course_id}",
+    ):
+        actor = str(
+            (st.session_state.get("manager_auth") or {}).get("username", "manager")
+        )
+        repo.apply_course_location_calibration(
+            course_id=course_id,
+            latitude=proposed_latitude,
+            longitude=proposed_longitude,
+            reading_count=len(readings),
+            median_accuracy_m=median_accuracy,
+            actor_identifier=actor,
+            created_at=now_in_app_timezone(settings).isoformat(),
+        )
+        _invalidate_read_caches(courses=True, reports=True)
+        st.session_state["pending_manager_course_code"] = str(course["code"])
+        st.session_state["manager_calibration_readings"] = []
+        st.session_state["manager_location_report"] = None
+        st.session_state["manager_notice"] = (
+            f"{course['code']} classroom point calibrated from {len(readings)} readings."
+        )
+        st.rerun()
+    if st.button(
+        "Clear calibration readings",
+        width="stretch",
+        key=f"clear_calibration_{course_id}",
+    ):
+        st.session_state["manager_calibration_readings"] = []
+        st.rerun(scope="fragment")
 
 
 @st.fragment
@@ -3368,6 +3768,10 @@ def _handle_student_access_location(
     if not university_id.strip():
         st.error("أدخل الرقم الجامعي أولاً.")
         return
+    snapshot = repo.get_student_course_snapshot(
+        course_id=course_id,
+        university_id=university_id.strip(),
+    )
     try:
         context = resolve_student_access_context(
             repo,
@@ -3376,9 +3780,31 @@ def _handle_student_access_location(
             geolocation_payload=payload,
             course_id=course_id,
         )
+        if snapshot is not None:
+            record_location_attempt(
+                repo,
+                settings,
+                course=snapshot["course"],
+                student=snapshot["student"],
+                geolocation_payload=payload,
+                attempt_type="registration",
+                success=True,
+                message="Classroom location accepted for device registration.",
+            )
         _set_student_access_context(context)
         st.rerun(scope="fragment")
     except Exception as error:
+        if snapshot is not None:
+            record_location_attempt(
+                repo,
+                settings,
+                course=snapshot["course"],
+                student=snapshot["student"],
+                geolocation_payload=payload,
+                attempt_type="registration",
+                success=False,
+                message=str(error),
+            )
         st.error(_student_message(error))
 
 
@@ -3839,6 +4265,16 @@ def _handle_stamp_location(payload, repo, settings, course, student, auth: dict)
         geolocation_payload=payload,
         verified_device=auth,
     )
+    record_location_attempt(
+        repo,
+        settings,
+        course=course,
+        student=student,
+        geolocation_payload=payload,
+        attempt_type="attendance",
+        success=result.success,
+        message=result.message,
+    )
     st.session_state["student_stamp_result"] = {
         "success": result.success,
         "message": result.message,
@@ -3938,6 +4374,11 @@ def _init_session_state() -> None:
         "manager_reset_ack": False,
         "manager_reset_confirmation": "",
         "manager_reset_password": "",
+        "manager_location_period": "Last 30 days",
+        "manager_location_report": None,
+        "manager_calibration_course_id": None,
+        "manager_calibration_readings": [],
+        "manager_calibration_processed": None,
         "course_editor_mode": "existing",
         "course_latitude": 0.0,
         "course_longitude": 0.0,
