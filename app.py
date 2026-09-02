@@ -721,7 +721,77 @@ MANAGER_SECTIONS = [
     "Attendance",
     "Security",
     "Reports",
+    "Settings",
 ]
+COURSE_RESET_ACTIONS = {
+    "course_attendance": (
+        "Reset course attendance",
+        "Removes attendance stamps only. The roster, timetable, and registered devices remain.",
+    ),
+    "course_timetable": (
+        "Reset timetable",
+        "Removes lecture windows and their attendance, login codes, and pending device requests.",
+    ),
+    "course_roster": (
+        "Reset course roster",
+        "Removes course enrollments only. Student profiles and historical course activity remain.",
+    ),
+    "course_activity": (
+        "Reset course activity",
+        "Removes timetable, attendance, login codes, device requests, alerts, and course audit events.",
+    ),
+    "delete_course": (
+        "Delete course",
+        "Deletes the course and all related data. Students shared with another course are preserved.",
+    ),
+}
+STUDENT_RESET_ACTIONS = {
+    "student_attendance": (
+        "Reset student attendance",
+        "Removes this student's attendance from the selected course only.",
+    ),
+    "student_device": (
+        "Reset registered device",
+        "Removes the student's device, login codes, and pending device requests across all courses.",
+    ),
+    "delete_student": (
+        "Delete student permanently",
+        "Deletes the student from every course with all attendance, devices, codes, and security data.",
+    ),
+}
+SYSTEM_RESET_ACTIONS = {
+    "reset_all_students": (
+        "Reset all student data",
+        "Removes every student, enrollment, attendance record, device, code, and student-security record. Courses and timetables remain.",
+    ),
+    "reset_all_course_activity": (
+        "Reset all course activity",
+        "Removes every timetable, attendance record, code, device request, alert, and course audit event. Courses, rosters, and registered devices remain.",
+    ),
+    "full_system": (
+        "Reset entire system",
+        "Removes all courses, students, timetables, attendance, devices, and security records.",
+    ),
+}
+RESET_ACTION_LABELS = {
+    **{key: value[0] for key, value in COURSE_RESET_ACTIONS.items()},
+    **{key: value[0] for key, value in STUDENT_RESET_ACTIONS.items()},
+    **{key: value[0] for key, value in SYSTEM_RESET_ACTIONS.items()},
+    "clear_cache": "Clear application cache",
+}
+RESET_TABLE_LABELS = {
+    "courses": "Courses",
+    "students": "Students",
+    "course_students": "Course enrollments",
+    "course_schedules": "Timetable windows",
+    "otp_codes": "Login codes",
+    "registered_devices": "Registered devices",
+    "pending_browser_enrollments": "Pending device requests",
+    "device_audit_events": "Device audit events",
+    "attendance_records": "Attendance records",
+    "proxy_alerts": "Security alerts",
+    "data_reset_audit": "Reset audit events",
+}
 STUDENT_SECTIONS = ["Check in", "Status", "History"]
 STUDENT_SECTION_LABELS = {
     "Check in": "تسجيل الحضور",
@@ -1281,6 +1351,8 @@ def _render_manager_workspace(repo: AttendanceRepository, settings) -> None:
             if st.button("Exit", key="manager_exit", width="stretch"):
                 st.session_state["manager_auth"] = None
                 st.session_state["manager_prepared_report"] = None
+                st.session_state["manager_reset_package"] = None
+                st.session_state["manager_full_backup"] = None
                 st.session_state["active_role"] = None
                 st.rerun()
 
@@ -1297,8 +1369,10 @@ def _render_manager_workspace(repo: AttendanceRepository, settings) -> None:
         _render_manager_attendance(repo, settings, course)
     elif section == "Security":
         _render_manager_security(repo, settings, course)
-    else:
+    elif section == "Reports":
         _render_manager_reports(repo, settings, course)
+    else:
+        _render_manager_settings(repo, settings, courses, course)
 
 
 def _render_manager_today(repo: AttendanceRepository, settings, courses) -> None:
@@ -1979,6 +2053,322 @@ def _render_manager_reports(repo: AttendanceRepository, settings, course) -> Non
                 st.rerun()
             except Exception as error:
                 st.error(str(error))
+
+
+def _render_manager_settings(
+    repo: AttendanceRepository,
+    settings,
+    courses: list[dict],
+    course,
+) -> None:
+    _render_page_head(
+        "Manager controls",
+        "Settings",
+        "Back up, reset, and audit application data.",
+        settings,
+    )
+    maintenance_col, backup_col = st.columns([1.25, 0.75], gap="large")
+    with maintenance_col:
+        _render_section_title("Data management", "Prepared resets are atomic")
+        scope_options = ["System"]
+        if course is not None:
+            scope_options = ["Course", "Student", "System"]
+        scope = st.selectbox(
+            "Reset scope",
+            scope_options,
+            key="manager_reset_scope",
+        )
+
+        selected_student_id = None
+        if scope == "Course":
+            action_options = list(COURSE_RESET_ACTIONS)
+            action = st.selectbox(
+                "Reset action",
+                action_options,
+                format_func=lambda value: COURSE_RESET_ACTIONS[value][0],
+                key="manager_course_reset_action",
+            )
+            st.caption(COURSE_RESET_ACTIONS[action][1])
+        elif scope == "Student":
+            students = _cached_list_students(
+                settings.database_target,
+                int(course["id"]),
+            )
+            if not students:
+                st.info("The selected course has no students to reset.")
+                action = None
+            else:
+                student_labels = {
+                    int(row["id"]): f"{row['university_id']} · {row['full_name']}"
+                    for row in students
+                }
+                selected_student_id = st.selectbox(
+                    "Student",
+                    list(student_labels),
+                    format_func=lambda value: student_labels[value],
+                    key="manager_settings_student_id",
+                )
+                action_options = list(STUDENT_RESET_ACTIONS)
+                action = st.selectbox(
+                    "Reset action",
+                    action_options,
+                    format_func=lambda value: STUDENT_RESET_ACTIONS[value][0],
+                    key="manager_student_reset_action",
+                )
+                st.caption(STUDENT_RESET_ACTIONS[action][1])
+        else:
+            action_options = list(SYSTEM_RESET_ACTIONS)
+            action = st.selectbox(
+                "Reset action",
+                action_options,
+                format_func=lambda value: SYSTEM_RESET_ACTIONS[value][0],
+                key="manager_system_reset_action",
+            )
+            st.caption(SYSTEM_RESET_ACTIONS[action][1])
+            st.error(
+                "System-wide resets affect every course or student. A manager password is "
+                "required before execution."
+            )
+
+        course_id = int(course["id"]) if course is not None and scope != "System" else None
+        reset_signature = (
+            action,
+            course_id,
+            int(selected_student_id) if selected_student_id is not None else None,
+        )
+        if action is not None and st.button(
+            "Prepare reset",
+            type="primary",
+            width="stretch",
+            key="prepare_manager_reset",
+        ):
+            try:
+                prepared_at = now_in_app_timezone(settings).isoformat()
+                package = repo.prepare_data_reset(
+                    action=action,
+                    course_id=course_id,
+                    student_id=selected_student_id,
+                )
+                package["signature"] = reset_signature
+                package["prepared_at"] = prepared_at
+                package["backup_bytes"] = _build_reset_backup_bytes(
+                    package,
+                    prepared_at=prepared_at,
+                )
+                st.session_state["manager_reset_package"] = package
+                st.session_state["manager_reset_ack"] = False
+                st.session_state["manager_reset_confirmation"] = ""
+                st.session_state["manager_reset_password"] = ""
+            except Exception as error:
+                st.error(str(error))
+
+        package = st.session_state.get("manager_reset_package")
+        if package is not None and tuple(package.get("signature", ())) == reset_signature:
+            _render_prepared_reset(
+                repo,
+                settings,
+                package=package,
+                course_id=course_id,
+                student_id=selected_student_id,
+            )
+
+    with backup_col:
+        _render_section_title("Backup and maintenance", "Manager tools")
+        st.caption(
+            "Full backups contain student records and device-security data. Store downloaded "
+            "files securely."
+        )
+        if st.button("Prepare full JSON backup", width="stretch"):
+            try:
+                prepared_at = now_in_app_timezone(settings).isoformat()
+                full_backup = repo.prepare_data_reset(action="full_system")
+                st.session_state["manager_full_backup"] = {
+                    "prepared_at": prepared_at,
+                    "data": _build_reset_backup_bytes(
+                        full_backup,
+                        prepared_at=prepared_at,
+                    ),
+                }
+            except Exception as error:
+                st.error(str(error))
+        full_backup = st.session_state.get("manager_full_backup")
+        if full_backup is not None:
+            st.download_button(
+                "Download full JSON backup",
+                data=full_backup["data"],
+                file_name=f"classpresence_full_backup_{full_backup['prepared_at'][:10]}.json",
+                mime="application/json",
+                width="stretch",
+                on_click="ignore",
+            )
+        if st.button("Clear application cache", width="stretch"):
+            actor_identifier = str(
+                (st.session_state.get("manager_auth") or {}).get("username", "manager")
+            )
+            repo.record_data_management_audit(
+                actor_identifier=actor_identifier,
+                action="clear_cache",
+                scope_type="system",
+                scope_identifier="SYSTEM",
+                counts={},
+                created_at=now_in_app_timezone(settings).isoformat(),
+            )
+            _invalidate_read_caches(all_data=True)
+            st.session_state["manager_notice"] = "Application cache cleared. Database records were preserved."
+            st.rerun()
+        if courses and st.button("Open course restore", width="stretch"):
+            st.session_state["manager_section"] = "Reports"
+            st.rerun()
+        st.caption("Course workbook restore remains available in Reports.")
+
+    _render_section_title("Data-management audit", "Latest 50 actions")
+    audit_rows = repo.list_data_reset_audit(limit=50)
+    if audit_rows:
+        st.dataframe(
+            [
+                {
+                    "Time": str(row["created_at"])[:19],
+                    "Manager": row["actor_identifier"],
+                    "Action": RESET_ACTION_LABELS.get(
+                        str(row["action"]),
+                        str(row["action"]).replace("_", " ").title(),
+                    ),
+                    "Scope": row["scope_identifier"],
+                    "Rows": sum(int(value) for value in row.get("counts", {}).values()),
+                }
+                for row in audit_rows
+            ],
+            width="stretch",
+            hide_index=True,
+            lazy=True,
+        )
+    else:
+        _empty_state("No data-management actions have been recorded.")
+
+
+def _render_prepared_reset(
+    repo: AttendanceRepository,
+    settings,
+    *,
+    package: dict,
+    course_id: int | None,
+    student_id: int | None,
+) -> None:
+    action = str(package["action"])
+    scope_identifier = str(package["scope_identifier"])
+    confirmation_target = {
+        "reset_all_students": "RESET ALL STUDENTS",
+        "reset_all_course_activity": "RESET ALL ACTIVITY",
+        "full_system": "RESET ALL DATA",
+    }.get(action, scope_identifier)
+    counts = package.get("counts", {})
+    total_rows = sum(int(value) for value in counts.values())
+    st.divider()
+    _render_section_title("Prepared reset", f"{total_rows} rows affected")
+    affected_rows = [
+        {
+            "Data": RESET_TABLE_LABELS.get(table_name, table_name.replace("_", " ").title()),
+            "Rows": count,
+        }
+        for table_name, count in counts.items()
+        if int(count) > 0
+    ]
+    if affected_rows:
+        st.dataframe(affected_rows, width="stretch", hide_index=True)
+    else:
+        st.info("No matching database rows currently exist. Executing will still record an audit event.")
+    safe_scope = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in scope_identifier
+    )
+    st.download_button(
+        "Download reset backup",
+        data=package["backup_bytes"],
+        file_name=f"classpresence_{action}_{safe_scope}.json",
+        mime="application/json",
+        width="stretch",
+        on_click="ignore",
+    )
+    st.warning(
+        f"This action cannot be undone from the application. Type {confirmation_target} exactly "
+        "after saving the backup."
+    )
+    acknowledged = st.checkbox(
+        "I understand which records will be removed.",
+        key="manager_reset_ack",
+    )
+    confirmation = st.text_input(
+        f"Type {confirmation_target} to confirm",
+        key="manager_reset_confirmation",
+    )
+    system_wide_action = action in SYSTEM_RESET_ACTIONS
+    if system_wide_action:
+        st.text_input(
+            "Manager password",
+            type="password",
+            key="manager_reset_password",
+        )
+    ready = acknowledged and confirmation.strip() == confirmation_target
+    if st.button(
+        "Execute permanent reset",
+        type="primary",
+        width="stretch",
+        disabled=not ready,
+    ):
+        if system_wide_action and not verify_password(
+            str(st.session_state.get("manager_reset_password", "")),
+            settings.manager_password_hash,
+        ):
+            st.error("Manager password is incorrect.")
+            return
+        actor_identifier = str(
+            (st.session_state.get("manager_auth") or {}).get("username", "manager")
+        )
+        try:
+            result = repo.execute_data_reset(
+                action=action,
+                actor_identifier=actor_identifier,
+                created_at=now_in_app_timezone(settings).isoformat(),
+                course_id=course_id,
+                student_id=student_id,
+            )
+        except Exception as error:
+            st.error(str(error))
+            return
+        _invalidate_read_caches(all_data=True)
+        st.session_state["manager_reset_package"] = None
+        st.session_state["manager_full_backup"] = None
+        st.session_state["manager_prepared_report"] = None
+        st.session_state["pending_manager_course_code"] = None
+        affected = sum(int(value) for value in result["counts"].values())
+        action_label = RESET_ACTION_LABELS.get(action, action.replace("_", " ").title())
+        st.session_state["manager_notice"] = (
+            f"{action_label} completed for {result['scope_identifier']}: "
+            f"{affected} rows affected."
+        )
+        st.rerun()
+
+
+def _build_reset_backup_bytes(package: dict, *, prepared_at: str) -> bytes:
+    payload = {
+        "format": "classpresence-reset-backup-v1",
+        "prepared_at": prepared_at,
+        "action": package["action"],
+        "scope_type": package["scope_type"],
+        "scope_identifier": package["scope_identifier"],
+        "course_id": package.get("course_id"),
+        "course_code": package.get("course_code", ""),
+        "student_id": package.get("student_id"),
+        "student_university_id": package.get("student_university_id", ""),
+        "counts": package["counts"],
+        "tables": package["tables"],
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        indent=2,
+        default=str,
+    ).encode("utf-8")
 
 
 def _render_student_entry(repo: AttendanceRepository, settings) -> None:
@@ -3480,6 +3870,11 @@ def _init_session_state() -> None:
         "manager_course_code": "No courses",
         "pending_manager_course_code": None,
         "manager_prepared_report": None,
+        "manager_reset_package": None,
+        "manager_full_backup": None,
+        "manager_reset_ack": False,
+        "manager_reset_confirmation": "",
+        "manager_reset_password": "",
         "course_editor_mode": "existing",
         "course_latitude": 0.0,
         "course_longitude": 0.0,

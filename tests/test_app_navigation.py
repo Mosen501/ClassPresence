@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from streamlit.testing.v1 import AppTest
 
 from app import (
+    MANAGER_SECTIONS,
     STUDENT_RTL_CSS,
     STUDENT_SECTION_LABELS,
     STUDENT_SECTIONS,
@@ -62,6 +63,68 @@ class AppNavigationTestCase(unittest.TestCase):
         today_source = app_source[today_start:today_end]
         self.assertIn("_cached_manager_today_snapshot", today_source)
         self.assertNotIn("_cached_list_course_attendance", today_source)
+
+    def test_manager_settings_exposes_guarded_reset_workflow(self) -> None:
+        app_source = APP_PATH.read_text()
+
+        self.assertIn("Settings", MANAGER_SECTIONS)
+        for message in (
+            "Prepare reset",
+            "Download reset backup",
+            "Type {confirmation_target} to confirm",
+            "Execute permanent reset",
+            "RESET ALL DATA",
+            "Manager password",
+            "Data-management audit",
+        ):
+            self.assertIn(message, app_source)
+        self.assertIn("repo.prepare_data_reset(", app_source)
+        self.assertIn("repo.execute_data_reset(", app_source)
+        self.assertIn("verify_password(", app_source)
+
+    def test_manager_settings_prepares_a_scoped_backup_before_reset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "attendance.db")
+            repo = AttendanceRepository(database_path)
+            repo.init_schema()
+            repo.create_course(
+                code="SET101",
+                title="Settings",
+                start_date="2026-09-01",
+                end_date="2026-12-01",
+                total_meetings=10,
+                latitude=1.0,
+                longitude=1.0,
+                radius_m=50.0,
+                absence_limit_pct=20.0,
+                created_at="2026-09-01T09:00:00+03:00",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "ATTENDANCE_DB_PATH": database_path,
+                    "APP_ENV": "development",
+                },
+                clear=False,
+            ):
+                app = AppTest.from_file(str(APP_PATH)).run(timeout=30)
+                app.session_state["active_role"] = "manager"
+                app.session_state["manager_auth"] = {"username": "manager"}
+                app.session_state["manager_section"] = "Settings"
+                app.run(timeout=30)
+
+                labels = [button.label for button in app.button]
+                self.assertIn("Prepare reset", labels)
+                self.assertIn("Prepare full JSON backup", labels)
+                self.assertIn("Clear application cache", labels)
+                self._button(app, "Prepare reset").click()
+                app.run(timeout=30)
+
+                package = app.session_state["manager_reset_package"]
+                self.assertEqual(package["action"], "course_attendance")
+                self.assertEqual(package["scope_identifier"], "SET101")
+                self.assertTrue(package["backup_bytes"].startswith(b"{"))
+                self.assertIn("Execute permanent reset", [button.label for button in app.button])
 
     def test_student_localization_keeps_internal_navigation_values(self) -> None:
         self.assertEqual(STUDENT_SECTIONS, ["Check in", "Status", "History"])

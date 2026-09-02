@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,7 +21,23 @@ except ImportError:  # pragma: no cover - sqlite-only local/test environments
 
 
 Record = dict[str, Any]
-SCHEMA_VERSION = "2026-09-01-1"
+SCHEMA_VERSION = "2026-09-01-2"
+
+DATA_RESET_ACTIONS = frozenset(
+    {
+        "course_attendance",
+        "course_timetable",
+        "course_roster",
+        "course_activity",
+        "delete_course",
+        "student_attendance",
+        "student_device",
+        "delete_student",
+        "reset_all_students",
+        "reset_all_course_activity",
+        "full_system",
+    }
+)
 
 _SQLITE_SCHEMA_STATEMENTS = (
     """
@@ -175,6 +192,17 @@ _SQLITE_SCHEMA_STATEMENTS = (
         accuracy_m REAL,
         created_at TEXT NOT NULL,
         resolved_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS data_reset_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_identifier TEXT NOT NULL,
+        action TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_identifier TEXT NOT NULL,
+        counts_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
     )
     """,
 )
@@ -334,6 +362,17 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         resolved_at TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS data_reset_audit (
+        id BIGSERIAL PRIMARY KEY,
+        actor_identifier TEXT NOT NULL,
+        action TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_identifier TEXT NOT NULL,
+        counts_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -409,6 +448,529 @@ class AttendanceRepository:
                 ),
                 ("schema_version", SCHEMA_VERSION),
             )
+
+    def prepare_data_reset(
+        self,
+        *,
+        action: str,
+        course_id: int | None = None,
+        student_id: int | None = None,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            return self._build_data_reset_snapshot(
+                connection,
+                action=action,
+                course_id=course_id,
+                student_id=student_id,
+            )
+
+    def execute_data_reset(
+        self,
+        *,
+        action: str,
+        actor_identifier: str,
+        created_at: str,
+        course_id: int | None = None,
+        student_id: int | None = None,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            snapshot = self._build_data_reset_snapshot(
+                connection,
+                action=action,
+                course_id=course_id,
+                student_id=student_id,
+            )
+            exclusive_student_ids = [
+                int(row["id"])
+                for row in snapshot["tables"].get("students", [])
+            ]
+
+            if action == "course_attendance":
+                connection.execute(
+                    self._sql("DELETE FROM attendance_records WHERE course_id = ?"),
+                    (course_id,),
+                )
+            elif action == "course_timetable":
+                connection.execute(
+                    self._sql("DELETE FROM attendance_records WHERE course_id = ?"),
+                    (course_id,),
+                )
+                connection.execute(
+                    self._sql("DELETE FROM otp_codes WHERE course_id = ?"),
+                    (course_id,),
+                )
+                connection.execute(
+                    self._sql(
+                        "DELETE FROM pending_browser_enrollments WHERE course_id = ?"
+                    ),
+                    (course_id,),
+                )
+                connection.execute(
+                    self._sql("DELETE FROM course_schedules WHERE course_id = ?"),
+                    (course_id,),
+                )
+            elif action == "course_roster":
+                connection.execute(
+                    self._sql("DELETE FROM course_students WHERE course_id = ?"),
+                    (course_id,),
+                )
+            elif action == "course_activity":
+                for table_name in (
+                    "attendance_records",
+                    "otp_codes",
+                    "pending_browser_enrollments",
+                    "proxy_alerts",
+                    "course_schedules",
+                    "device_audit_events",
+                ):
+                    connection.execute(
+                        self._sql(f"DELETE FROM {table_name} WHERE course_id = ?"),
+                        (course_id,),
+                    )
+            elif action == "delete_course":
+                connection.execute(
+                    self._sql("DELETE FROM device_audit_events WHERE course_id = ?"),
+                    (course_id,),
+                )
+                connection.execute(
+                    self._sql("DELETE FROM courses WHERE id = ?"),
+                    (course_id,),
+                )
+                if exclusive_student_ids:
+                    placeholders = ", ".join("?" for _ in exclusive_student_ids)
+                    connection.execute(
+                        self._sql(
+                            f"""
+                            DELETE FROM students
+                            WHERE id IN ({placeholders})
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM course_students cs
+                                  WHERE cs.student_id = students.id
+                              )
+                            """
+                        ),
+                        exclusive_student_ids,
+                    )
+            elif action == "student_attendance":
+                connection.execute(
+                    self._sql(
+                        "DELETE FROM attendance_records WHERE course_id = ? AND student_id = ?"
+                    ),
+                    (course_id, student_id),
+                )
+            elif action == "student_device":
+                device_rows = snapshot["tables"].get("registered_devices", [])
+                if device_rows:
+                    device = device_rows[0]
+                    self._insert_device_audit_event(
+                        connection,
+                        student_id=int(student_id),
+                        university_id=str(snapshot["student_university_id"]),
+                        student_name=str(snapshot["student_name"]),
+                        course_id=course_id,
+                        course_code=str(snapshot["course_code"]),
+                        event_type="manager_device_reset",
+                        actor_type="manager",
+                        actor_identifier=actor_identifier,
+                        previous_device_id=int(device["id"]),
+                        previous_device_binding_hash=str(device["device_binding_hash"]),
+                        new_device_id=None,
+                        new_device_binding_hash=None,
+                        created_at=created_at,
+                    )
+                connection.execute(
+                    self._sql(
+                        "DELETE FROM pending_browser_enrollments WHERE student_id = ?"
+                    ),
+                    (student_id,),
+                )
+                connection.execute(
+                    self._sql("DELETE FROM otp_codes WHERE student_id = ?"),
+                    (student_id,),
+                )
+                connection.execute(
+                    self._sql("DELETE FROM registered_devices WHERE student_id = ?"),
+                    (student_id,),
+                )
+            elif action == "delete_student":
+                connection.execute(
+                    self._sql("DELETE FROM device_audit_events WHERE student_id = ?"),
+                    (student_id,),
+                )
+                connection.execute(
+                    self._sql("DELETE FROM students WHERE id = ?"),
+                    (student_id,),
+                )
+            elif action == "reset_all_students":
+                connection.execute("DELETE FROM device_audit_events")
+                connection.execute("DELETE FROM students")
+            elif action == "reset_all_course_activity":
+                for table_name in (
+                    "attendance_records",
+                    "otp_codes",
+                    "pending_browser_enrollments",
+                    "proxy_alerts",
+                    "course_schedules",
+                    "device_audit_events",
+                ):
+                    connection.execute(f"DELETE FROM {table_name}")
+            elif action == "full_system":
+                for table_name in (
+                    "attendance_records",
+                    "otp_codes",
+                    "pending_browser_enrollments",
+                    "proxy_alerts",
+                    "course_students",
+                    "course_schedules",
+                    "registered_devices",
+                    "device_audit_events",
+                    "courses",
+                    "students",
+                    "data_reset_audit",
+                ):
+                    connection.execute(f"DELETE FROM {table_name}")
+
+            self._insert_data_reset_audit(
+                connection,
+                actor_identifier=actor_identifier,
+                action=action,
+                scope_type=str(snapshot["scope_type"]),
+                scope_identifier=str(snapshot["scope_identifier"]),
+                counts=snapshot["counts"],
+                created_at=created_at,
+            )
+            return {
+                "action": action,
+                "scope_type": snapshot["scope_type"],
+                "scope_identifier": snapshot["scope_identifier"],
+                "counts": snapshot["counts"],
+            }
+
+    def record_data_management_audit(
+        self,
+        *,
+        actor_identifier: str,
+        action: str,
+        scope_type: str,
+        scope_identifier: str,
+        counts: dict[str, int],
+        created_at: str,
+    ) -> None:
+        with self._connection() as connection:
+            self._insert_data_reset_audit(
+                connection,
+                actor_identifier=actor_identifier,
+                action=action,
+                scope_type=scope_type,
+                scope_identifier=scope_identifier,
+                counts=counts,
+                created_at=created_at,
+            )
+
+    def list_data_reset_audit(self, *, limit: int = 100) -> list[Record]:
+        rows = self._fetchall(
+            """
+            SELECT *
+            FROM data_reset_audit
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in rows:
+            try:
+                row["counts"] = json.loads(str(row["counts_json"]))
+            except json.JSONDecodeError:
+                row["counts"] = {}
+        return rows
+
+    def _build_data_reset_snapshot(
+        self,
+        connection,
+        *,
+        action: str,
+        course_id: int | None,
+        student_id: int | None,
+    ) -> dict[str, Any]:
+        if action not in DATA_RESET_ACTIONS:
+            raise ValueError("Unsupported data reset action.")
+
+        def fetch(query: str, parameters: Iterable[Any] = ()) -> list[Record]:
+            rows = connection.execute(self._sql(query), parameters).fetchall()
+            return [dict(row) for row in rows]
+
+        course_actions = {
+            "course_attendance",
+            "course_timetable",
+            "course_roster",
+            "course_activity",
+            "delete_course",
+            "student_attendance",
+        }
+        student_actions = {
+            "student_attendance",
+            "student_device",
+            "delete_student",
+        }
+        course = None
+        student = None
+        if action in course_actions:
+            if course_id is None:
+                raise ValueError("Select a course before preparing this reset.")
+            course_rows = fetch("SELECT * FROM courses WHERE id = ?", (course_id,))
+            if not course_rows:
+                raise ValueError("Course was not found.")
+            course = course_rows[0]
+        if action in student_actions:
+            if student_id is None:
+                raise ValueError("Select a student before preparing this reset.")
+            student_rows = fetch("SELECT * FROM students WHERE id = ?", (student_id,))
+            if not student_rows:
+                raise ValueError("Student was not found.")
+            student = student_rows[0]
+            if course is None and course_id is not None:
+                course_rows = fetch("SELECT * FROM courses WHERE id = ?", (course_id,))
+                if course_rows:
+                    course = course_rows[0]
+        if action == "student_attendance":
+            enrollment = fetch(
+                "SELECT id FROM course_students WHERE course_id = ? AND student_id = ?",
+                (course_id, student_id),
+            )
+            if not enrollment:
+                raise ValueError("Student is not enrolled in the selected course.")
+
+        tables: dict[str, list[Record]] = {}
+        if action == "course_attendance":
+            tables["attendance_records"] = fetch(
+                "SELECT * FROM attendance_records WHERE course_id = ?",
+                (course_id,),
+            )
+        elif action == "course_timetable":
+            tables = {
+                "attendance_records": fetch(
+                    "SELECT * FROM attendance_records WHERE course_id = ?", (course_id,)
+                ),
+                "otp_codes": fetch(
+                    "SELECT * FROM otp_codes WHERE course_id = ?", (course_id,)
+                ),
+                "pending_browser_enrollments": fetch(
+                    "SELECT * FROM pending_browser_enrollments WHERE course_id = ?",
+                    (course_id,),
+                ),
+                "course_schedules": fetch(
+                    "SELECT * FROM course_schedules WHERE course_id = ?", (course_id,)
+                ),
+            }
+        elif action == "course_roster":
+            tables["course_students"] = fetch(
+                "SELECT * FROM course_students WHERE course_id = ?",
+                (course_id,),
+            )
+        elif action == "course_activity":
+            for table_name in (
+                "attendance_records",
+                "otp_codes",
+                "pending_browser_enrollments",
+                "proxy_alerts",
+                "course_schedules",
+                "device_audit_events",
+            ):
+                tables[table_name] = fetch(
+                    f"SELECT * FROM {table_name} WHERE course_id = ?",
+                    (course_id,),
+                )
+        elif action == "delete_course":
+            tables = {
+                "courses": [dict(course)],
+                "course_students": fetch(
+                    "SELECT * FROM course_students WHERE course_id = ?", (course_id,)
+                ),
+                "course_schedules": fetch(
+                    "SELECT * FROM course_schedules WHERE course_id = ?", (course_id,)
+                ),
+                "otp_codes": fetch(
+                    "SELECT * FROM otp_codes WHERE course_id = ?", (course_id,)
+                ),
+                "pending_browser_enrollments": fetch(
+                    "SELECT * FROM pending_browser_enrollments WHERE course_id = ?",
+                    (course_id,),
+                ),
+                "attendance_records": fetch(
+                    "SELECT * FROM attendance_records WHERE course_id = ?", (course_id,)
+                ),
+                "proxy_alerts": fetch(
+                    "SELECT * FROM proxy_alerts WHERE course_id = ?", (course_id,)
+                ),
+                "device_audit_events": fetch(
+                    "SELECT * FROM device_audit_events WHERE course_id = ?", (course_id,)
+                ),
+                "students": fetch(
+                    """
+                    SELECT s.*
+                    FROM students s
+                    INNER JOIN course_students cs ON cs.student_id = s.id
+                    WHERE cs.course_id = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM course_students other
+                          WHERE other.student_id = s.id AND other.course_id <> ?
+                      )
+                    """,
+                    (course_id, course_id),
+                ),
+            }
+            exclusive_ids = [int(row["id"]) for row in tables["students"]]
+            if exclusive_ids:
+                placeholders = ", ".join("?" for _ in exclusive_ids)
+                tables["registered_devices"] = fetch(
+                    f"SELECT * FROM registered_devices WHERE student_id IN ({placeholders})",
+                    exclusive_ids,
+                )
+            else:
+                tables["registered_devices"] = []
+        elif action == "student_attendance":
+            tables["attendance_records"] = fetch(
+                """
+                SELECT *
+                FROM attendance_records
+                WHERE course_id = ? AND student_id = ?
+                """,
+                (course_id, student_id),
+            )
+        elif action == "student_device":
+            tables = {
+                "registered_devices": fetch(
+                    "SELECT * FROM registered_devices WHERE student_id = ?", (student_id,)
+                ),
+                "pending_browser_enrollments": fetch(
+                    "SELECT * FROM pending_browser_enrollments WHERE student_id = ?",
+                    (student_id,),
+                ),
+                "otp_codes": fetch(
+                    "SELECT * FROM otp_codes WHERE student_id = ?", (student_id,)
+                ),
+            }
+        elif action == "delete_student":
+            tables = {
+                "students": [dict(student)],
+                "course_students": fetch(
+                    "SELECT * FROM course_students WHERE student_id = ?", (student_id,)
+                ),
+                "attendance_records": fetch(
+                    "SELECT * FROM attendance_records WHERE student_id = ?", (student_id,)
+                ),
+                "otp_codes": fetch(
+                    "SELECT * FROM otp_codes WHERE student_id = ?", (student_id,)
+                ),
+                "registered_devices": fetch(
+                    "SELECT * FROM registered_devices WHERE student_id = ?", (student_id,)
+                ),
+                "pending_browser_enrollments": fetch(
+                    "SELECT * FROM pending_browser_enrollments WHERE student_id = ?",
+                    (student_id,),
+                ),
+                "proxy_alerts": fetch(
+                    "SELECT * FROM proxy_alerts WHERE student_id = ?", (student_id,)
+                ),
+                "device_audit_events": fetch(
+                    "SELECT * FROM device_audit_events WHERE student_id = ?", (student_id,)
+                ),
+            }
+        elif action in {"reset_all_students", "reset_all_course_activity", "full_system"}:
+            table_names = (
+                (
+                    "students",
+                    "course_students",
+                    "otp_codes",
+                    "registered_devices",
+                    "pending_browser_enrollments",
+                    "device_audit_events",
+                    "attendance_records",
+                    "proxy_alerts",
+                )
+                if action == "reset_all_students"
+                else (
+                    "course_schedules",
+                    "otp_codes",
+                    "pending_browser_enrollments",
+                    "device_audit_events",
+                    "attendance_records",
+                    "proxy_alerts",
+                )
+                if action == "reset_all_course_activity"
+                else (
+                    "courses",
+                    "students",
+                    "course_students",
+                    "course_schedules",
+                    "otp_codes",
+                    "registered_devices",
+                    "pending_browser_enrollments",
+                    "device_audit_events",
+                    "attendance_records",
+                    "proxy_alerts",
+                    "data_reset_audit",
+                )
+            )
+            for table_name in table_names:
+                tables[table_name] = fetch(f"SELECT * FROM {table_name}")
+
+        if action in {"reset_all_students", "reset_all_course_activity", "full_system"}:
+            scope_type = "system"
+            scope_identifier = "SYSTEM"
+        elif action in student_actions:
+            scope_type = "student"
+            scope_identifier = str(student["university_id"])
+        else:
+            scope_type = "course"
+            scope_identifier = str(course["code"])
+        return {
+            "action": action,
+            "scope_type": scope_type,
+            "scope_identifier": scope_identifier,
+            "course_id": course_id,
+            "course_code": str(course["code"]) if course is not None else "",
+            "student_id": student_id,
+            "student_university_id": (
+                str(student["university_id"]) if student is not None else ""
+            ),
+            "student_name": str(student["full_name"]) if student is not None else "",
+            "counts": {table_name: len(rows) for table_name, rows in tables.items()},
+            "tables": tables,
+        }
+
+    def _insert_data_reset_audit(
+        self,
+        connection,
+        *,
+        actor_identifier: str,
+        action: str,
+        scope_type: str,
+        scope_identifier: str,
+        counts: dict[str, int],
+        created_at: str,
+    ) -> None:
+        connection.execute(
+            self._sql(
+                """
+                INSERT INTO data_reset_audit (
+                    actor_identifier, action, scope_type, scope_identifier,
+                    counts_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+            ),
+            (
+                actor_identifier,
+                action,
+                scope_type,
+                scope_identifier,
+                json.dumps(counts, sort_keys=True),
+                created_at,
+            ),
+        )
 
     def create_course(
         self,
@@ -1942,6 +2504,12 @@ class AttendanceRepository:
             """
             CREATE INDEX IF NOT EXISTS ix_pending_browser_course_status
             ON pending_browser_enrollments (course_id, status, created_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_data_reset_audit_created
+            ON data_reset_audit (created_at)
             """
         )
 
