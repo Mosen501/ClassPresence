@@ -44,18 +44,14 @@
       let componentArgs = null;
       let locale = "en";
       let reportedCapabilityOperation = null;
-      let autoStartedOperation = null;
       let runningOperation = null;
       const messages = {
         en: {
           register: "Register this device",
           verify: "Verify this device",
-          browserRegister: "Register this device",
           browserVerify: "Verify this registered device",
-          registerDescription: "The app will select the best secure registration method available.",
+          registerDescription: "Confirm with this device's screen lock to create its passkey.",
           verifyDescription: "Your credential confirms this registered device.",
-          browserPreparing: "Preparing secure device registration...",
-          browserPrepared: "Secure device registration prepared.",
           browserCredentialMissing: "The secure credential stored in this browser is missing.",
           unsupported: "Secure device verification is not supported on this device.",
           browserUnsupported: "Secure device storage is not supported on this device.",
@@ -68,12 +64,9 @@
         ar: {
           register: "تسجيل هذا الجهاز",
           verify: "التحقق من هذا الجهاز",
-          browserRegister: "تسجيل هذا الجهاز",
           browserVerify: "التحقق من الجهاز المسجل",
-          registerDescription: "سيختار النظام تلقائياً أفضل طريقة تسجيل آمنة متاحة.",
+          registerDescription: "أكّد بقفل شاشة هذا الجهاز لإنشاء مفتاح المرور الخاص به.",
           verifyDescription: "تؤكد بيانات الاعتماد هوية الجهاز المسجل.",
-          browserPreparing: "جارٍ إعداد تسجيل الجهاز الآمن...",
-          browserPrepared: "تم إعداد تسجيل الجهاز الآمن.",
           browserCredentialMissing: "بيانات الحماية المحفوظة في هذا المتصفح غير موجودة.",
           unsupported: "هذا الجهاز لا يدعم التحقق الآمن من الجهاز.",
           browserUnsupported: "هذا الجهاز لا يدعم التخزين الآمن لبيانات الجهاز.",
@@ -144,27 +137,6 @@
         });
       }
 
-      async function storeBrowserKey(record) {
-        const database = await openCredentialDatabase();
-        await new Promise((resolve, reject) => {
-          const transaction = database.transaction("keys", "readwrite");
-          transaction.objectStore("keys").put(record);
-          transaction.oncomplete = resolve;
-          transaction.onerror = () => reject(transaction.error);
-          transaction.onabort = () => reject(transaction.error);
-        });
-        database.close();
-      }
-
-      async function requestPersistentStorage() {
-        if (!navigator.storage || typeof navigator.storage.persist !== "function") return;
-        try {
-          await navigator.storage.persist();
-        } catch (_error) {
-          // Persistence is best-effort; the non-extractable browser key remains usable without it.
-        }
-      }
-
       async function loadBrowserKey(credentialId) {
         const database = await openCredentialDatabase();
         const record = await new Promise((resolve, reject) => {
@@ -175,34 +147,6 @@
         });
         database.close();
         return record;
-      }
-
-      async function createBrowserCredential() {
-        if (!browserKeySupported()) throw new Error(copy("browserUnsupported"));
-        const generated = await crypto.subtle.generateKey(
-          { name: "ECDSA", namedCurve: "P-256" },
-          true,
-          ["sign", "verify"],
-        );
-        const publicKeyBytes = await crypto.subtle.exportKey("spki", generated.publicKey);
-        const privateKeyBytes = await crypto.subtle.exportKey("pkcs8", generated.privateKey);
-        const privateKey = await crypto.subtle.importKey(
-          "pkcs8",
-          privateKeyBytes,
-          { name: "ECDSA", namedCurve: "P-256" },
-          false,
-          ["sign"],
-        );
-        const credentialId = base64url(await crypto.subtle.digest("SHA-256", publicKeyBytes));
-        const publicKey = base64url(publicKeyBytes);
-        await storeBrowserKey({
-          credentialId,
-          privateKey,
-          publicKey,
-          createdAt: new Date().toISOString(),
-        });
-        await requestPersistentStorage();
-        return { credential_id: credentialId, public_key: publicKey };
       }
 
       async function signWithBrowserCredential(options) {
@@ -306,20 +250,12 @@
         const labels = {
           register: "register",
           authenticate: "verify",
-          browser_register: "browserRegister",
           browser_authenticate: "browserVerify",
         };
         if (componentArgs.action === "capability") {
           button.style.display = "none";
           statusText.textContent = copy("checking");
           reportCapability();
-        } else if (componentArgs.action === "browser_register_auto") {
-          button.style.display = "none";
-          statusText.textContent = copy("browserPreparing");
-          if (autoStartedOperation !== componentArgs.operationId) {
-            autoStartedOperation = componentArgs.operationId;
-            setTimeout(() => { void performAction(); }, 0);
-          }
         } else {
           button.style.display = "block";
           button.textContent = copy(labels[componentArgs.action] || "verify");
@@ -346,7 +282,7 @@
           });
           return;
         }
-        if (["browser_register", "browser_register_auto", "browser_authenticate"].includes(action)
+        if (action === "browser_authenticate"
             && !browserKeySupported()) {
           setValue({
             operation_id: operationId,
@@ -372,8 +308,6 @@
                 ? registrationCredential(credential)
                 : authenticationCredential(credential),
             };
-          } else if (action === "browser_register" || action === "browser_register_auto") {
-            result = await createBrowserCredential();
           } else if (action === "browser_authenticate") {
             result = await signWithBrowserCredential(options);
           }
@@ -384,9 +318,7 @@
             origin: window.location.origin,
             hostname: window.location.hostname,
           }, result));
-          statusText.textContent = action === "browser_register_auto"
-            ? copy("browserPrepared")
-            : copy("verified");
+          statusText.textContent = copy("verified");
         } catch (error) {
           setValue({
             operation_id: operationId,

@@ -19,10 +19,10 @@ from attendance_app.services import (
     authenticate_student_browser_key,
     authenticate_student_passkey,
     otp_delivery_configuration_error,
-    register_student_passkey,
     request_login_code_for_access_context,
     request_student_browser_key_enrollment,
     request_student_browser_key_recovery,
+    request_student_passkey_enrollment,
     reset_student_device,
     resolve_active_student_session,
     resolve_registered_student_access_context,
@@ -246,7 +246,7 @@ class ServicesTestCase(unittest.TestCase):
                     transports='["internal"]',
                 ),
             ):
-                registered = register_student_passkey(
+                pending_id = request_student_passkey_enrollment(
                     self.repo,
                     self.settings,
                     access_context=context,
@@ -256,6 +256,19 @@ class ServicesTestCase(unittest.TestCase):
                     expected_rp_id="localhost",
                     expected_origin="http://localhost:8501",
                 )
+
+            self.assertIsNone(
+                self.repo.get_registered_device_for_student(int(student["id"]))
+            )
+            pending = self.repo.get_pending_device_enrollment(pending_id)
+            assert pending is not None
+            self.assertEqual(pending["auth_method"], "passkey")
+            self.assertEqual(pending["credential_device_type"], "single_device")
+            device_id = self.repo.approve_pending_device_enrollment(
+                pending_id=pending_id,
+                actor_identifier="manager_user",
+                reviewed_at="2026-07-01T10:01:00+03:00",
+            )
 
             with patch(
                 "attendance_app.services.complete_authentication",
@@ -271,21 +284,25 @@ class ServicesTestCase(unittest.TestCase):
                         **{**context.__dict__, "device_enrolled": True}
                     ),
                     credential={},
-                    device_token=payload["device_token"],
+                    device_token="a-new-token-after-clearing-browser-storage",
                     expected_challenge="challenge",
                     expected_rp_id="localhost",
                     expected_origin="http://localhost:8501",
                 )
 
-        self.assertEqual(verified["device_id"], registered["device_id"])
+        self.assertEqual(verified["device_id"], device_id)
+        self.assertEqual(verified["trust_level"], "strict")
         self.assertEqual(verified["schedule_id"], context.schedule_id)
         self.assertEqual(verified["attendance_date"], context.attendance_date)
         self.assertEqual(verified["session_expires_at"], context.session_expires_at)
         device = self.repo.get_registered_device_for_student(int(student["id"]))
         assert device is not None
         self.assertEqual(int(device["sign_count"]), 1)
+        self.assertEqual(device["auth_method"], "passkey")
+        self.assertEqual(device["credential_device_type"], "single_device")
+        self.assertEqual(int(device["credential_backed_up"]), 0)
         audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
-        self.assertEqual(audit[0]["event_type"], "student_device_registered")
+        self.assertEqual(audit[0]["event_type"], "manager_passkey_approved")
         auth = {
             "course_id": int(course["id"]),
             "student_id": int(student["id"]),
@@ -400,12 +417,13 @@ class ServicesTestCase(unittest.TestCase):
                     "accuracy_m": 5,
                     "sample_count": 3,
                     "captured_at": now.isoformat(),
-                    "device_token": device_token,
+                    "device_token": "fresh-location-component-token-after-browser-cleanup",
                 },
                 verified_device={
                     "device_id": device_id,
                     "credential_id": "credential-one",
                     "device_binding_hash": device_hash,
+                    "auth_method": "passkey",
                     "session_expires_at": "2026-07-01T22:00:00+03:00",
                 },
             )
@@ -492,6 +510,45 @@ class ServicesTestCase(unittest.TestCase):
         audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
         self.assertEqual(audit[0]["event_type"], "manager_device_approved")
         self.assertEqual(audit[0]["actor_identifier"], "manager_user")
+
+    def test_legacy_browser_registration_expires_at_course_end(self) -> None:
+        course, student = self._seed_course(end_date="2026-07-31")
+        now = datetime(2026, 8, 1, 10, 0, tzinfo=ZoneInfo("Asia/Riyadh"))
+        device_token = "test-browser-key-device-00001"
+        self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="legacy-browser-credential",
+            public_key="legacy-browser-public-key",
+            sign_count=0,
+            device_binding_hash=hash_device_token(
+                device_token,
+                self.settings.otp_pepper,
+            ),
+            transports="[]",
+            aaguid="",
+            credential_device_type="device_credential",
+            credential_backed_up=False,
+            created_at="2026-07-01T10:00:00+03:00",
+            auth_method="browser_key",
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            context = resolve_registered_student_access_context(
+                self.repo,
+                self.settings,
+                university_id="20260001",
+                course_id=int(course["id"]),
+            )
+            with self.assertRaisesRegex(ValueError, "expired at the end of the course"):
+                authenticate_student_browser_key(
+                    self.repo,
+                    self.settings,
+                    access_context=context,
+                    credential_id="legacy-browser-credential",
+                    signature="unused",
+                    message="unused",
+                    device_token=device_token,
+                )
 
     def test_missing_browser_key_can_be_recovered_on_same_registered_device(self) -> None:
         course, student = self._seed_course()
@@ -872,6 +929,7 @@ class ServicesTestCase(unittest.TestCase):
                     student_id=int(student["id"]),
                     course_id=int(course["id"]),
                     actor_identifier="manager_user",
+                    reason="Student replaced the registered phone",
                 )
             )
 
@@ -879,6 +937,7 @@ class ServicesTestCase(unittest.TestCase):
         audit = self.repo.list_device_audit_events(course_id=int(course["id"]))
         self.assertEqual(audit[0]["event_type"], "manager_device_reset")
         self.assertEqual(audit[0]["actor_identifier"], "manager_user")
+        self.assertEqual(audit[0]["reason"], "Student replaced the registered phone")
         self.assertEqual(int(audit[0]["previous_device_id"]), device_id)
         audited_student_name = audit[0]["student_name"]
         self.repo.sync_course_roster(

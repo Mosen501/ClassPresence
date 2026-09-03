@@ -2,7 +2,7 @@
 
 AttendancApp is a Streamlit-based attendance platform for university classes. It gives academic managers a protected portal for configuring courses, defining class meeting windows, syncing official rosters, exporting Excel reports, and geofencing attendance to a configurable classroom radius.
 
-Students register one device from the classroom using their roster ID, a one-time identity code, and fresh location evidence. After registration they can open the portal from anywhere with that device, while the attendance action silently captures a fresh location and stamps attendance only during approved schedule windows. The application also flags exam ineligibility when absences reach 20% of the configured total meetings.
+Students register one device from the classroom using their roster ID, fresh location evidence, a WebAuthn passkey, and in-person instructor approval. After registration they can open the portal from anywhere with that authenticator, while the attendance action silently captures a fresh location and stamps attendance only during approved schedule windows. The application also flags exam ineligibility when absences reach 20% of the configured total meetings.
 
 ## Features
 
@@ -10,25 +10,19 @@ Students register one device from the classroom using their roster ID, a one-tim
 - Course setup with course code, course name, start date, end date, timetable windows, classroom location, and attendance radius
 - Bulk student import from `.xlsx` or `.csv` with `student id`, `student name`, and `email` columns
 - Roster-only enrollment workflow so students must exist on the uploaded course roster
-- One-time classroom device enrollment with roster identity, OTP, and fresh location verification
+- One-time classroom device enrollment with roster identity, fresh location, WebAuthn, and instructor approval
 - Location-free portal access from the registered device after enrollment
-- Automatic device-security enrollment with manager-approved compatibility fallback
+- Strict classification for non-synchronized single-device credentials and compatibility classification for synchronized credentials
 - Single attendance button that captures fresh location and stamps attendance atomically
-- Initial enrollment verification and OTPs expire when the active lecture window ends
-- Initial OTP redemption restricted to the device and lecture that requested the code
+- Initial enrollment and instructor approval expire when the active lecture window ends
 - One-student-per-device enforcement for every lecture window
 - Manager device resets available during live lectures with permanent audit history
 - Security incident log for blocked proxy attempts with manager review and device reset
 - End-to-end Excel reporting with executive summary, course details, roster and device status, timetable, attendance evidence, student performance, lecture analytics, security alerts, device audit, and OTP activity
-- Email-based OTP delivery, with a development-friendly console fallback
 - Geofenced attendance stamping within a configurable radius that defaults to 3 meters
 - Attendance records with timestamp, device information, and location distance checks
 - Student dashboard with attendance totals, absences, and exam-entry status
 - PostgreSQL-ready storage for production deployments, with SQLite kept as a local fallback
-
-## Why Email OTP By Default
-
-Reliable SMS delivery is usually not free in production. Because of that, this project ships with email OTP support out of the box and keeps the student phone number field available for future paid SMS integrations such as Twilio or Africa's Talking.
 
 ## Project Structure
 
@@ -101,13 +95,12 @@ Copy `.env.example` values into your shell environment or deployment platform.
 
 - Device geolocation usually requires `localhost` during local development or HTTPS in deployment.
 - Secure device verification requires `localhost` or HTTPS. For production, set `WEBAUTHN_ORIGIN` and `WEBAUTHN_RP_ID` if the public URL cannot be inferred correctly.
-- A student enrolls one device after the first successful in-class location and OTP check. Returning portal access verifies the registered device but does not request location or another OTP.
+- A student enrolls one device after an in-class location check, WebAuthn creation, and in-person instructor approval. Returning portal access verifies the registered passkey but does not request location.
 - Registered-device portal sessions last up to 12 hours and can be opened from any location. Course status and history remain available even when no lecture window is active.
 - During an active lecture, one attendance button gathers several fresh high-accuracy readings, selects the best reading, verifies the registered device binding, checks the classroom radius, and records attendance in one server-side operation.
-- Device registration automatically selects a supported protection method. A manager must verify the student in person and approve a compatibility fallback request from Security before it becomes the student's one active registered device.
-- Security and relying-party configuration errors do not trigger compatibility fallback; they remain visible for administrator correction. The fallback reason is retained with the manager approval request.
-- Compatibility credentials are non-exportable P-256 signing keys stored in the registered device profile. Clearing site data, using private mode, or changing the application profile requires an audited manager reset.
-- If a student replaces or clears a registered device profile, a manager can reset the device from the Security page, including during a live lecture. Every reset and subsequent enrollment remains in the device audit history.
+- WebAuthn credentials reported as non-backed-up `single_device` credentials receive strict status. Synchronized, multi-device, or unclassified credentials receive compatibility status and continue using the same classroom location checks.
+- New browser-storage credentials are no longer created. Existing browser-key registrations remain usable only through each linked course's end date so students have the semester to migrate.
+- If an authenticator is lost or replaced, a manager must enter a reason and reset it from Security. Every approval and reset remains in the permanent device audit history.
 - Excel reports include complete report-safe activity without row caps. OTP values and hashes, device security keys, credential IDs, and raw device-binding hashes are never exported.
 - The manager location picker uses OpenStreetMap tiles, so internet access helps the map render during local testing.
 - GPS accuracy can drift indoors. The app enforces the configured radius, but device-reported accuracy should still be reviewed during rollout.
@@ -121,8 +114,8 @@ Copy `.env.example` values into your shell environment or deployment platform.
 
 ## Testing
 
-The repository includes unit and workflow tests for schedules, OTPs, distance checks, secure
-device registration and fallback, reporting, and roster parsing.
+The repository includes unit and workflow tests for schedules, distance checks, WebAuthn
+device registration and approval, legacy migration, reporting, and roster parsing.
 
 ```bash
 python3 -m unittest discover -s tests
@@ -144,8 +137,8 @@ ATTENDANCE_DB_URL = "postgresql://attendance_user:strong-password@db-host.exampl
 APP_ENV = "production"
 APP_TIMEZONE = "Asia/Riyadh"
 OTP_DELIVERY_MODE = "email"
-WEBAUTHN_ORIGIN = "https://your-app.streamlit.app"
-WEBAUTHN_RP_ID = "your-app.streamlit.app"
+WEBAUTHN_ORIGIN = "https://classpresence.streamlit.app"
+WEBAUTHN_RP_ID = "classpresence.streamlit.app"
 ```
 
 If your password contains special URL characters, it is often easier to use separate secrets instead of a single URL:
@@ -160,8 +153,8 @@ ATTENDANCE_DB_SSLMODE = "require"
 APP_ENV = "production"
 APP_TIMEZONE = "Asia/Riyadh"
 OTP_DELIVERY_MODE = "email"
-WEBAUTHN_ORIGIN = "https://your-app.streamlit.app"
-WEBAUTHN_RP_ID = "your-app.streamlit.app"
+WEBAUTHN_ORIGIN = "https://classpresence.streamlit.app"
+WEBAUTHN_RP_ID = "classpresence.streamlit.app"
 ```
 
 With this setup:
@@ -172,6 +165,5 @@ With this setup:
 
 ## Production Notes
 
-- Add a real SMTP account or paid SMS provider
 - Put Streamlit behind HTTPS
 - Replace single-manager credentials with SSO or an external identity provider

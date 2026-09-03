@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - sqlite-only local/test environments
 
 
 Record = dict[str, Any]
-SCHEMA_VERSION = "2026-09-01-3"
+SCHEMA_VERSION = "2026-09-03-1"
 BROWSER_KEY_RECOVERY_REASON = "registered_browser_credential_missing"
 
 
@@ -140,6 +140,12 @@ _SQLITE_SCHEMA_STATEMENTS = (
         device_binding_hash TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         fallback_reason TEXT NOT NULL DEFAULT '',
+        auth_method TEXT NOT NULL DEFAULT 'browser_key',
+        sign_count INTEGER NOT NULL DEFAULT 0,
+        transports TEXT NOT NULL DEFAULT '[]',
+        aaguid TEXT NOT NULL DEFAULT '',
+        credential_device_type TEXT NOT NULL DEFAULT '',
+        credential_backed_up INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL,
         reviewed_at TEXT,
@@ -162,6 +168,7 @@ _SQLITE_SCHEMA_STATEMENTS = (
         previous_device_binding_hash TEXT,
         new_device_id INTEGER,
         new_device_binding_hash TEXT,
+        reason TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
     )
     """,
@@ -347,6 +354,12 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         device_binding_hash TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         fallback_reason TEXT NOT NULL DEFAULT '',
+        auth_method TEXT NOT NULL DEFAULT 'browser_key',
+        sign_count BIGINT NOT NULL DEFAULT 0,
+        transports TEXT NOT NULL DEFAULT '[]',
+        aaguid TEXT NOT NULL DEFAULT '',
+        credential_device_type TEXT NOT NULL DEFAULT '',
+        credential_backed_up INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL,
         reviewed_at TEXT,
@@ -369,6 +382,7 @@ _POSTGRES_SCHEMA_STATEMENTS = (
         previous_device_binding_hash TEXT,
         new_device_id BIGINT,
         new_device_binding_hash TEXT,
+        reason TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
     )
     """,
@@ -2046,7 +2060,7 @@ class AttendanceRepository:
             (sign_count, last_used_at, device_id),
         )
 
-    def create_pending_browser_enrollment(
+    def create_pending_device_enrollment(
         self,
         *,
         student_id: int,
@@ -2059,6 +2073,12 @@ class AttendanceRepository:
         expires_at: str,
         created_at: str,
         fallback_reason: str = "",
+        auth_method: str = "browser_key",
+        sign_count: int = 0,
+        transports: str = "[]",
+        aaguid: str = "",
+        credential_device_type: str = "",
+        credential_backed_up: bool = False,
     ) -> int:
         with self._connection() as connection:
             connection.execute(
@@ -2076,9 +2096,10 @@ class AttendanceRepository:
                 INSERT INTO pending_browser_enrollments (
                     student_id, course_id, schedule_id, attendance_date,
                     credential_id, public_key, device_binding_hash, expires_at,
-                    fallback_reason, status, created_at
+                    fallback_reason, auth_method, sign_count, transports, aaguid,
+                    credential_device_type, credential_backed_up, status, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """
             if self.backend == "postgres":
                 query += " RETURNING id"
@@ -2094,6 +2115,12 @@ class AttendanceRepository:
                     device_binding_hash,
                     expires_at,
                     fallback_reason,
+                    auth_method,
+                    sign_count,
+                    transports,
+                    aaguid,
+                    credential_device_type,
+                    int(credential_backed_up),
                     created_at,
                 ),
             )
@@ -2104,13 +2131,20 @@ class AttendanceRepository:
                 return int(row["id"])
             return int(cursor.lastrowid)
 
-    def get_pending_browser_enrollment(self, pending_id: int) -> Record | None:
+    def create_pending_browser_enrollment(self, **kwargs) -> int:
+        """Compatibility wrapper for legacy browser-key migrations."""
+        return self.create_pending_device_enrollment(**kwargs)
+
+    def get_pending_device_enrollment(self, pending_id: int) -> Record | None:
         return self._fetchone(
             "SELECT * FROM pending_browser_enrollments WHERE id = ?",
             (pending_id,),
         )
 
-    def list_pending_browser_enrollments(self, *, course_id: int) -> list[Record]:
+    def get_pending_browser_enrollment(self, pending_id: int) -> Record | None:
+        return self.get_pending_device_enrollment(pending_id)
+
+    def list_pending_device_enrollments(self, *, course_id: int) -> list[Record]:
         return self._fetchall(
             """
             SELECT
@@ -2124,7 +2158,10 @@ class AttendanceRepository:
             (course_id,),
         )
 
-    def approve_pending_browser_enrollment(
+    def list_pending_browser_enrollments(self, *, course_id: int) -> list[Record]:
+        return self.list_pending_device_enrollments(course_id=course_id)
+
+    def approve_pending_device_enrollment(
         self,
         *,
         pending_id: int,
@@ -2183,6 +2220,7 @@ class AttendanceRepository:
                 str(pending["fallback_reason"] or "")
                 == BROWSER_KEY_RECOVERY_REASON
             )
+            auth_method = str(pending["auth_method"] or "browser_key")
             if is_recovery:
                 if (
                     registered_device is None
@@ -2224,8 +2262,7 @@ class AttendanceRepository:
                         credential_device_type, credential_backed_up, auth_method,
                         created_at, last_used_at
                     )
-                    VALUES (?, ?, ?, 0, ?, '[]', '', 'device_credential', 0,
-                            'browser_key', ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 if self.backend == "postgres":
                     insert_query += " RETURNING id"
@@ -2235,7 +2272,13 @@ class AttendanceRepository:
                         int(pending["student_id"]),
                         str(pending["credential_id"]),
                         str(pending["public_key"]),
+                        int(pending["sign_count"] or 0),
                         str(pending["device_binding_hash"]),
+                        str(pending["transports"] or "[]"),
+                        str(pending["aaguid"] or ""),
+                        str(pending["credential_device_type"] or ""),
+                        int(pending["credential_backed_up"] or 0),
+                        auth_method,
                         reviewed_at,
                         reviewed_at,
                     ),
@@ -2279,7 +2322,11 @@ class AttendanceRepository:
                 event_type=(
                     "manager_browser_key_recovered"
                     if is_recovery
-                    else "manager_device_approved"
+                    else (
+                        "manager_passkey_approved"
+                        if auth_method == "passkey"
+                        else "manager_device_approved"
+                    )
                 ),
                 actor_type="manager",
                 actor_identifier=actor_identifier,
@@ -2299,7 +2346,10 @@ class AttendanceRepository:
             )
             return device_id
 
-    def reject_pending_browser_enrollment(
+    def approve_pending_browser_enrollment(self, **kwargs) -> int:
+        return self.approve_pending_device_enrollment(**kwargs)
+
+    def reject_pending_device_enrollment(
         self,
         *,
         pending_id: int,
@@ -2319,12 +2369,16 @@ class AttendanceRepository:
             )
             return cursor.rowcount > 0
 
+    def reject_pending_browser_enrollment(self, **kwargs) -> bool:
+        return self.reject_pending_device_enrollment(**kwargs)
+
     def reset_registered_device_with_audit(
         self,
         *,
         student_id: int,
         course_id: int,
         actor_identifier: str,
+        reason: str,
         created_at: str,
     ) -> bool:
         with self._connection() as connection:
@@ -2358,6 +2412,7 @@ class AttendanceRepository:
                 previous_device_binding_hash=str(device["device_binding_hash"]),
                 new_device_id=None,
                 new_device_binding_hash=None,
+                reason=reason,
                 created_at=created_at,
             )
             cursor = connection.execute(
@@ -2858,12 +2913,32 @@ class AttendanceRepository:
                     "ALTER TABLE registered_devices ADD COLUMN auth_method TEXT "
                     "NOT NULL DEFAULT 'passkey'"
                 )
+            audit_columns = self._postgres_columns(connection, "device_audit_events")
+            if "reason" not in audit_columns:
+                connection.execute(
+                    "ALTER TABLE device_audit_events ADD COLUMN reason TEXT "
+                    "NOT NULL DEFAULT ''"
+                )
             pending_columns = self._postgres_columns(connection, "pending_browser_enrollments")
             if "fallback_reason" not in pending_columns:
                 connection.execute(
                     "ALTER TABLE pending_browser_enrollments ADD COLUMN fallback_reason TEXT "
                     "NOT NULL DEFAULT ''"
                 )
+            pending_additions = {
+                "auth_method": "TEXT NOT NULL DEFAULT 'browser_key'",
+                "sign_count": "BIGINT NOT NULL DEFAULT 0",
+                "transports": "TEXT NOT NULL DEFAULT '[]'",
+                "aaguid": "TEXT NOT NULL DEFAULT ''",
+                "credential_device_type": "TEXT NOT NULL DEFAULT ''",
+                "credential_backed_up": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for column_name, definition in pending_additions.items():
+                if column_name not in pending_columns:
+                    connection.execute(
+                        f"ALTER TABLE pending_browser_enrollments "
+                        f"ADD COLUMN {column_name} {definition}"
+                    )
             attendance_columns = self._postgres_columns(connection, "attendance_records")
             if "registered_device_id" not in attendance_columns:
                 connection.execute(
@@ -2897,12 +2972,32 @@ class AttendanceRepository:
                 "ALTER TABLE registered_devices ADD COLUMN auth_method TEXT "
                 "NOT NULL DEFAULT 'passkey'"
             )
+        audit_columns = self._sqlite_columns(connection, "device_audit_events")
+        if "reason" not in audit_columns:
+            connection.execute(
+                "ALTER TABLE device_audit_events ADD COLUMN reason TEXT "
+                "NOT NULL DEFAULT ''"
+            )
         pending_columns = self._sqlite_columns(connection, "pending_browser_enrollments")
         if "fallback_reason" not in pending_columns:
             connection.execute(
                 "ALTER TABLE pending_browser_enrollments ADD COLUMN fallback_reason TEXT "
                 "NOT NULL DEFAULT ''"
             )
+        pending_additions = {
+            "auth_method": "TEXT NOT NULL DEFAULT 'browser_key'",
+            "sign_count": "INTEGER NOT NULL DEFAULT 0",
+            "transports": "TEXT NOT NULL DEFAULT '[]'",
+            "aaguid": "TEXT NOT NULL DEFAULT ''",
+            "credential_device_type": "TEXT NOT NULL DEFAULT ''",
+            "credential_backed_up": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column_name, definition in pending_additions.items():
+            if column_name not in pending_columns:
+                connection.execute(
+                    f"ALTER TABLE pending_browser_enrollments "
+                    f"ADD COLUMN {column_name} {definition}"
+                )
         attendance_columns = self._sqlite_columns(connection, "attendance_records")
         if "registered_device_id" not in attendance_columns:
             connection.execute("ALTER TABLE attendance_records ADD COLUMN registered_device_id INTEGER")
@@ -3011,6 +3106,7 @@ class AttendanceRepository:
         new_device_id: int | None,
         new_device_binding_hash: str | None,
         created_at: str,
+        reason: str = "",
     ) -> None:
         connection.execute(
             self._sql(
@@ -3019,9 +3115,9 @@ class AttendanceRepository:
                     student_id, university_id, student_name, course_id, course_code,
                     event_type, actor_type, actor_identifier, previous_device_id,
                     previous_device_binding_hash, new_device_id, new_device_binding_hash,
-                    created_at
+                    reason, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
             (
@@ -3037,6 +3133,7 @@ class AttendanceRepository:
                 previous_device_binding_hash,
                 new_device_id,
                 new_device_binding_hash,
+                reason,
                 created_at,
             ),
         )

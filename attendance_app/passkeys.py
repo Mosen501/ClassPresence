@@ -20,15 +20,6 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-AUTOMATIC_BROWSER_FALLBACK_ERRORS = frozenset(
-    {
-        "ConstraintError",
-        "NotAllowedError",
-        "NotSupportedError",
-        "UnknownError",
-    }
-)
-
 
 @dataclass(frozen=True)
 class RegisteredPasskey:
@@ -58,8 +49,11 @@ def hash_device_token(token: str, pepper: str) -> str:
     ).hexdigest()
 
 
-def passkey_failure_allows_browser_fallback(error_name: str | None) -> bool:
-    return str(error_name or "").strip() in AUTOMATIC_BROWSER_FALLBACK_ERRORS
+def passkey_trust_level(*, credential_device_type: str, credential_backed_up: bool) -> str:
+    """Classify a credential without pretending synced passkeys are one physical device."""
+    if credential_device_type == "single_device" and not credential_backed_up:
+        return "strict"
+    return "compatibility"
 
 
 def build_registration_options(

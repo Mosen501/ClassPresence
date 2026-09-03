@@ -266,6 +266,10 @@ class DeviceDatabaseTestCase(unittest.TestCase):
                 str(row[1])
                 for row in connection.execute("PRAGMA table_info(pending_browser_enrollments)")
             }
+            audit_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(device_audit_events)")
+            }
 
         self.assertIn("schedule_id", otp_columns)
         self.assertIn("attendance_date", otp_columns)
@@ -274,6 +278,16 @@ class DeviceDatabaseTestCase(unittest.TestCase):
         self.assertIn("auth_method", device_columns)
         self.assertIsNotNone(pending_table)
         self.assertIn("fallback_reason", pending_columns)
+        for column in (
+            "auth_method",
+            "sign_count",
+            "transports",
+            "aaguid",
+            "credential_device_type",
+            "credential_backed_up",
+        ):
+            self.assertIn(column, pending_columns)
+        self.assertIn("reason", audit_columns)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from attendance_app.passkeys import (
     build_authentication_options,
     build_registration_options,
     hash_device_token,
-    passkey_failure_allows_browser_fallback,
+    passkey_trust_level,
 )
 
 
@@ -20,7 +20,7 @@ class PasskeyTestCase(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, different)
 
-    def test_registration_options_allow_compatible_authenticators_with_verification(self) -> None:
+    def test_registration_options_allow_available_authenticator_with_verification(self) -> None:
         options_json, challenge = build_registration_options(
             rp_id="localhost",
             rp_name="ClassPresence",
@@ -47,17 +47,21 @@ class PasskeyTestCase(unittest.TestCase):
         self.assertEqual(options["userVerification"], "required")
         self.assertEqual(options["challenge"], challenge)
 
-    def test_only_availability_failures_allow_automatic_browser_fallback(self) -> None:
-        for error_name in (
-            "ConstraintError",
-            "NotAllowedError",
-            "NotSupportedError",
-            "UnknownError",
-        ):
-            self.assertTrue(passkey_failure_allows_browser_fallback(error_name))
-
-        for error_name in ("AbortError", "DataError", "InvalidStateError", "SecurityError", None):
-            self.assertFalse(passkey_failure_allows_browser_fallback(error_name))
+    def test_only_non_synced_single_device_credentials_are_strict(self) -> None:
+        self.assertEqual(
+            passkey_trust_level(
+                credential_device_type="single_device",
+                credential_backed_up=False,
+            ),
+            "strict",
+        )
+        self.assertEqual(
+            passkey_trust_level(
+                credential_device_type="multi_device",
+                credential_backed_up=True,
+            ),
+            "compatibility",
+        )
 
 
 if __name__ == "__main__":

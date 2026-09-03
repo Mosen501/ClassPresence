@@ -77,26 +77,35 @@ class AppNavigationTestCase(unittest.TestCase):
         self.assertNotIn("locale", signature(geo_capture).parameters)
         self.assertNotIn("locale", signature(passkey_action).parameters)
 
-    def test_device_registration_uses_one_passkey_first_action_with_automatic_fallback(self) -> None:
+    def test_new_device_registration_uses_webauthn_without_browser_fallback(self) -> None:
         component_html = PASSKEY_COMPONENT_PATH.read_text()
+        app_source = APP_PATH.read_text()
+        registration_start = app_source.index("def _render_student_device_registration_step")
+        registration_end = app_source.index("def _render_student_browser_key_step")
+        registration_source = app_source[registration_start:registration_end]
+        access_start = app_source.index("def _render_student_access")
+        access_end = app_source.index("def _render_student_portal")
+        access_source = app_source[access_start:access_end]
 
         self.assertIn('register: "Register this device"', component_html)
-        self.assertIn('componentArgs.action === "browser_register_auto"', component_html)
         self.assertIn('error.name = "CredentialMissingError"', component_html)
-        self.assertIn("navigator.storage.persist()", component_html)
+        self.assertNotIn("createBrowserCredential", component_html)
+        self.assertNotIn("browser_register_auto", component_html)
         self.assertNotIn("privateKeyPkcs8", component_html)
-        self.assertIn("void performAction()", component_html)
         self.assertNotIn('register: "Register with a passkey"', component_html)
+        self.assertIn("request_student_passkey_enrollment(", app_source)
+        self.assertNotIn("_render_student_browser_key_step", registration_source)
+        self.assertNotIn("إرسال رمز التحقق", access_source)
 
-    def test_missing_browser_credential_uses_approved_recovery_and_full_rerun(self) -> None:
+    def test_missing_legacy_browser_credential_requires_audited_reset(self) -> None:
         app_source = APP_PATH.read_text()
         browser_step_start = app_source.index("def _render_student_browser_key_step")
         browser_step_end = app_source.index("def _ensure_browser_key_operation")
         browser_step_source = app_source[browser_step_start:browser_step_end]
 
         self.assertIn('== "CredentialMissingError"', browser_step_source)
-        self.assertIn("request_student_browser_key_recovery(", browser_step_source)
-        self.assertIn("طلب استعادة بيانات الجهاز", browser_step_source)
+        self.assertIn("إعادة تعيين", browser_step_source)
+        self.assertNotIn("request_student_browser_key_recovery(", browser_step_source)
         self.assertNotIn('st.rerun(scope="fragment")', browser_step_source)
 
     def test_attendance_uses_one_location_and_stamp_action(self) -> None:

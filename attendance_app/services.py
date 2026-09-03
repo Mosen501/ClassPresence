@@ -22,6 +22,7 @@ from attendance_app.passkeys import (
     complete_authentication,
     complete_registration,
     hash_device_token,
+    passkey_trust_level,
 )
 from attendance_app.utils import (
     AttendanceSummary,
@@ -578,7 +579,7 @@ def verify_login_code_for_access_context(
     return course, student
 
 
-def register_student_passkey(
+def request_student_passkey_enrollment(
     repo: AttendanceRepository,
     settings: Settings,
     *,
@@ -588,7 +589,7 @@ def register_student_passkey(
     expected_challenge: str,
     expected_rp_id: str,
     expected_origin: str,
-) -> dict:
+) -> int:
     now = now_in_app_timezone(settings)
     _require_access_context_window(repo, settings, access_context, now=now)
     device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
@@ -606,6 +607,12 @@ def register_student_passkey(
         )
         raise ValueError("Device identity changed. Start the check-in again.")
 
+    passkey = complete_registration(
+        credential=credential,
+        expected_challenge=expected_challenge,
+        expected_rp_id=expected_rp_id,
+        expected_origin=expected_origin,
+    )
     registration_conflicts = repo.list_registered_device_conflicts(
         student_id=access_context.student_id,
         device_binding_hash=device_binding_hash,
@@ -642,40 +649,28 @@ def register_student_passkey(
         )
         raise ValueError("This device is already registered to another student.")
 
-    passkey = complete_registration(
-        credential=credential,
-        expected_challenge=expected_challenge,
-        expected_rp_id=expected_rp_id,
-        expected_origin=expected_origin,
+    trust_level = passkey_trust_level(
+        credential_device_type=passkey.credential_device_type,
+        credential_backed_up=passkey.credential_backed_up,
     )
-    device_id = repo.create_registered_device(
+    return repo.create_pending_device_enrollment(
         student_id=access_context.student_id,
+        course_id=access_context.course_id,
+        schedule_id=access_context.schedule_id,
+        attendance_date=access_context.attendance_date,
         credential_id=passkey.credential_id,
         public_key=passkey.public_key,
-        sign_count=passkey.sign_count,
         device_binding_hash=device_binding_hash,
+        expires_at=access_context.session_expires_at,
+        created_at=now.isoformat(),
+        fallback_reason=f"WebAuthn trust: {trust_level}",
+        auth_method="passkey",
+        sign_count=passkey.sign_count,
         transports=passkey.transports,
         aaguid=passkey.aaguid,
         credential_device_type=passkey.credential_device_type,
         credential_backed_up=passkey.credential_backed_up,
-        created_at=now.isoformat(),
-        auth_method="passkey",
     )
-    repo.record_device_registration_audit(
-        student_id=access_context.student_id,
-        course_id=access_context.course_id,
-        device_id=device_id,
-        device_binding_hash=device_binding_hash,
-        created_at=now.isoformat(),
-    )
-    return {
-        "device_id": device_id,
-        "credential_id": passkey.credential_id,
-        "device_binding_hash": device_binding_hash,
-        "schedule_id": access_context.schedule_id,
-        "attendance_date": access_context.attendance_date,
-        "session_expires_at": access_context.session_expires_at,
-    }
 
 
 def authenticate_student_passkey(
@@ -700,24 +695,6 @@ def authenticate_student_passkey(
         raise ValueError("No registered device was found for this student.")
     if str(device.get("auth_method") or "passkey") != "passkey":
         raise ValueError("This student uses a different registered-device verification method.")
-    device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
-    if not hmac.compare_digest(
-        device_binding_hash,
-        str(device["device_binding_hash"]),
-    ):
-        _record_proxy_alert(
-            repo,
-            now=now,
-            course_id=access_context.course_id,
-            student_id=access_context.student_id,
-            schedule_id=access_context.schedule_id or None,
-            alert_type="unrecognized_device_verification",
-            severity="high",
-            message="A device verification attempt came from an unrecognized device.",
-            device_binding_hash=device_binding_hash,
-        )
-        raise ValueError("This is not the registered device for this student.")
-
     passkey = complete_authentication(
         credential=credential,
         expected_challenge=expected_challenge,
@@ -735,7 +712,12 @@ def authenticate_student_passkey(
     return {
         "device_id": int(device["id"]),
         "credential_id": passkey.credential_id,
-        "device_binding_hash": device_binding_hash,
+        "device_binding_hash": str(device["device_binding_hash"]),
+        "auth_method": "passkey",
+        "trust_level": passkey_trust_level(
+            credential_device_type=str(device.get("credential_device_type") or ""),
+            credential_backed_up=bool(device.get("credential_backed_up")),
+        ),
         "schedule_id": access_context.schedule_id,
         "attendance_date": access_context.attendance_date,
         "session_expires_at": access_context.session_expires_at,
@@ -894,6 +876,13 @@ def authenticate_student_browser_key(
         raise ValueError("No registered device was found for this student.")
     if str(device.get("auth_method") or "passkey") != "browser_key":
         raise ValueError("This student must verify using the registered device method.")
+    if snapshot is not None and now.date() > parse_iso_date(
+        snapshot["course"]["end_date"] or snapshot["course"]["start_date"]
+    ):
+        raise ValueError(
+            "This legacy device registration expired at the end of the course. "
+            "Ask the instructor to reset it, then register a passkey."
+        )
     device_binding_hash = hash_device_token(device_token, settings.otp_pepper)
     if not hmac.compare_digest(device_binding_hash, str(device["device_binding_hash"])):
         _record_proxy_alert(
@@ -925,6 +914,8 @@ def authenticate_student_browser_key(
         "device_id": int(device["id"]),
         "credential_id": credential_id,
         "device_binding_hash": device_binding_hash,
+        "auth_method": "browser_key",
+        "trust_level": "legacy",
         "schedule_id": access_context.schedule_id,
         "attendance_date": access_context.attendance_date,
         "session_expires_at": access_context.session_expires_at,
@@ -938,12 +929,17 @@ def reset_student_device(
     student_id: int,
     course_id: int,
     actor_identifier: str,
+    reason: str,
 ) -> bool:
+    normalized_reason = reason.strip()
+    if len(normalized_reason) < 5:
+        raise ValueError("Enter a reset reason for the permanent audit log.")
     now = now_in_app_timezone(settings)
     return repo.reset_registered_device_with_audit(
         student_id=student_id,
         course_id=course_id,
         actor_identifier=actor_identifier,
+        reason=normalized_reason[:500],
         created_at=now.isoformat(),
     )
 
@@ -1113,12 +1109,18 @@ def stamp_attendance(
         return AttendanceStampResult(success=False, message=str(error))
     attendance_date = now.date().isoformat()
 
+    verified_auth_method = str((verified_device or {}).get("auth_method") or "browser_key")
+    attendance_device_hash = (
+        str((verified_device or {}).get("device_binding_hash") or "")
+        if verified_auth_method == "passkey"
+        else device_binding_hash
+    )
     stamp_state = repo.get_attendance_stamp_state(
         course_id=int(course["id"]),
         student_id=int(student["id"]),
         schedule_id=int(active_schedule["id"]),
         attendance_date=attendance_date,
-        device_binding_hash=device_binding_hash,
+        device_binding_hash=attendance_device_hash,
     )
     registered_device = stamp_state["registered_device"]
     if registered_device is None or verified_device is None:
@@ -1144,7 +1146,10 @@ def stamp_attendance(
             verified_binding_hash,
             str(registered_device["device_binding_hash"]),
         )
-        or not hmac.compare_digest(verified_binding_hash, device_binding_hash)
+        or (
+            verified_auth_method != "passkey"
+            and not hmac.compare_digest(verified_binding_hash, device_binding_hash)
+        )
     ):
         _record_proxy_alert(
             repo,
@@ -1155,7 +1160,7 @@ def stamp_attendance(
             alert_type="device_changed_before_stamp",
             severity="high",
             message="The attendance device did not match the verified device session.",
-            device_binding_hash=device_binding_hash,
+            device_binding_hash=attendance_device_hash,
             geolocation_payload=geolocation_payload,
         )
         return AttendanceStampResult(
@@ -1183,7 +1188,7 @@ def stamp_attendance(
             alert_type="multiple_students_same_device",
             severity="critical",
             message="One device attempted attendance for multiple students in the same lecture.",
-            device_binding_hash=device_binding_hash,
+            device_binding_hash=attendance_device_hash,
             geolocation_payload=geolocation_payload,
         )
         return AttendanceStampResult(
@@ -1220,7 +1225,7 @@ def stamp_attendance(
             distance_m=distance_m,
             device_info=json.dumps(_sanitize_device_info(geolocation_payload)),
             registered_device_id=int(registered_device["id"]),
-            device_binding_hash=device_binding_hash,
+            device_binding_hash=attendance_device_hash,
         )
     except Exception:
         if repo.attendance_exists(
@@ -1237,7 +1242,7 @@ def stamp_attendance(
             course_id=int(course["id"]),
             schedule_id=int(active_schedule["id"]),
             attendance_date=attendance_date,
-            device_binding_hash=device_binding_hash,
+            device_binding_hash=attendance_device_hash,
         )
         if concurrent_device_stamp is not None:
             _record_proxy_alert(
@@ -1249,7 +1254,7 @@ def stamp_attendance(
                 alert_type="multiple_students_same_device",
                 severity="critical",
                 message="A concurrent proxy attendance attempt was blocked.",
-                device_binding_hash=device_binding_hash,
+                device_binding_hash=attendance_device_hash,
                 geolocation_payload=geolocation_payload,
             )
             return AttendanceStampResult(

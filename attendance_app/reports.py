@@ -720,6 +720,7 @@ def _build_device_audit_sheet(sheet, events: list) -> int:
         "Course",
         "Previous Device",
         "New Device",
+        "Reason",
     ]
     rows = [
         [
@@ -733,6 +734,7 @@ def _build_device_audit_sheet(sheet, events: list) -> int:
             row.get("course_code") or "",
             _device_reference(row.get("previous_device_id")),
             _device_reference(row.get("new_device_id")),
+            row.get("reason") or "",
         ]
         for row in events
     ]
@@ -742,10 +744,10 @@ def _build_device_audit_sheet(sheet, events: list) -> int:
         subtitle="Permanent registration and manager reset history",
         headers=headers,
         rows=rows,
-        widths=[20, 22, 28, 18, 30, 16, 24, 16, 20, 20],
+        widths=[20, 22, 28, 18, 30, 16, 24, 16, 20, 20, 36],
     )
     _format_datetime_columns(sheet, last_row, [2])
-    _format_text_columns(sheet, last_row, [1, 4, 7, 8, 9, 10])
+    _format_text_columns(sheet, last_row, [1, 4, 7, 8, 9, 10, 11])
     return last_row
 
 
@@ -1041,6 +1043,7 @@ def _device_event_label(value: object) -> str:
         "passkey_from_unrecognized_device": "Unrecognized Device Verification",
         "device_changed_during_browser_key_registration": "Device Changed During Registration",
         "manager_browser_key_approved": "Manager Device Approved",
+        "manager_passkey_approved": "Instructor Passkey Approval",
         "manager_browser_key_recovered": "Manager Credential Recovery Approved",
         "browser_key_recovery_from_unrecognized_device": "Unrecognized Recovery Request",
     }
