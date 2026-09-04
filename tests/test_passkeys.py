@@ -35,6 +35,22 @@ class PasskeyTestCase(unittest.TestCase):
         self.assertEqual(options["authenticatorSelection"]["userVerification"], "required")
         self.assertEqual(options["challenge"], challenge)
 
+    def test_registration_can_prefer_current_device_screen_lock(self) -> None:
+        options_json, _challenge = build_registration_options(
+            rp_id="localhost",
+            rp_name="ClassPresence",
+            student_id=7,
+            university_id="U2026007",
+            student_name="Student Seven",
+            prefer_platform=True,
+        )
+        options = json.loads(options_json)
+
+        self.assertEqual(
+            options["authenticatorSelection"]["authenticatorAttachment"],
+            "platform",
+        )
+
     def test_authentication_options_allow_only_registered_credential(self) -> None:
         options_json, challenge = build_authentication_options(
             rp_id="localhost",

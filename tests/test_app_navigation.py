@@ -87,7 +87,8 @@ class AppNavigationTestCase(unittest.TestCase):
         access_end = app_source.index("def _render_student_portal")
         access_source = app_source[access_start:access_end]
 
-        self.assertIn('register: "Register this device"', component_html)
+        self.assertIn('register: "Use Face ID, fingerprint, or PIN"', component_html)
+        self.assertIn("No USB key is required", component_html)
         self.assertIn('error.name = "CredentialMissingError"', component_html)
         self.assertNotIn("createBrowserCredential", component_html)
         self.assertNotIn("browser_register_auto", component_html)
@@ -201,6 +202,7 @@ class AppNavigationTestCase(unittest.TestCase):
                 app.session_state["active_role"] = "manager"
                 app.session_state["manager_auth"] = {"username": "manager"}
                 app.session_state["manager_section"] = "Settings"
+                app.session_state["manager_backup_passphrase"] = "test-backup-password"
                 app.run(timeout=30)
 
                 labels = [button.label for button in app.button]
@@ -214,6 +216,7 @@ class AppNavigationTestCase(unittest.TestCase):
                 self.assertEqual(package["action"], "course_attendance")
                 self.assertEqual(package["scope_identifier"], "SET101")
                 self.assertTrue(package["backup_bytes"].startswith(b"{"))
+                self.assertNotIn(b"SET101", package["backup_bytes"])
                 self.assertIn("Execute permanent reset", [button.label for button in app.button])
 
     def test_manager_location_page_renders_recorded_failures(self) -> None:

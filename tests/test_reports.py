@@ -184,7 +184,7 @@ class ReportsTestCase(unittest.TestCase):
         self.assertNotEqual(workbook["Security Alerts"]["J6"].value, "alert-raw-binding-secret")
         self.assertEqual(len(workbook["Attendance Records"].tables), 0)
         self.assertEqual(len(workbook["Security Alerts"].tables), 0)
-        self.assertEqual(workbook["Attendance Records"].auto_filter.ref, "A5:N6")
+        self.assertEqual(workbook["Attendance Records"].auto_filter.ref, "A5:V6")
         self.assertEqual(workbook["Security Alerts"].auto_filter.ref, "A5:O6")
 
         workbook_text = "\n".join(
@@ -269,7 +269,7 @@ class ReportsTestCase(unittest.TestCase):
             self.assertEqual(result["roster_rows"], 2)
             self.assertEqual(result["schedule_rows"], 1)
             self.assertEqual(result["imported_attendance"], 1)
-            self.assertEqual(course["total_meetings"], 24)
+            self.assertEqual(course["total_meetings"], 14)
             restored_student = repo.get_student_for_course(int(course["id"]), "U2026001")
             assert restored_student is not None
             self.assertEqual(restored_student["phone"], "+1555000001")

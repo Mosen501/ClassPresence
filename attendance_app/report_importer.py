@@ -49,7 +49,7 @@ def import_attendance_report_bytes(
     )
 
     if course_details.get("Total Meetings") not in (None, ""):
-        total_meetings = int(course_details["Total Meetings"])
+        total_meetings = max(1, int(course_details["Total Meetings"]))
     else:
         performance_sheet = _get_sheet(workbook, "Student Performance", "Eligibility")
         performance_header_row, performance_headers = _find_header_row(
@@ -58,12 +58,18 @@ def import_attendance_report_bytes(
         )
         total_meetings_index = performance_headers["total meetings"]
         total_meetings = max(
-            int(row[total_meetings_index])
-            for row in performance_sheet.iter_rows(
-                min_row=performance_header_row + 1,
-                values_only=True,
-            )
-            if row and row[total_meetings_index] is not None
+            1,
+            max(
+                (
+                    int(row[total_meetings_index])
+                    for row in performance_sheet.iter_rows(
+                        min_row=performance_header_row + 1,
+                        values_only=True,
+                    )
+                    if row and row[total_meetings_index] is not None
+                ),
+                default=1,
+            ),
         )
 
     roster_sheet = workbook["Roster"]
@@ -104,6 +110,12 @@ def import_attendance_report_bytes(
                 "label": _normalize(row[timetable_headers["window label"]]),
                 "start_time": _normalize(row[timetable_headers["start time"]]),
                 "end_time": _normalize(row[timetable_headers["end time"]]),
+                "attendance_grace_minutes": int(
+                    row[timetable_headers["on-time grace (min)"]]
+                    if "on-time grace (min)" in timetable_headers
+                    and row[timetable_headers["on-time grace (min)"]] not in (None, "")
+                    else 10
+                ),
             }
         )
 
@@ -132,6 +144,8 @@ def import_attendance_report_bytes(
             longitude=longitude,
             radius_m=radius_m,
             absence_limit_pct=absence_limit_pct,
+            actor_identifier=f"report import: {source_name}",
+            updated_at=generated_at,
         )
 
     course = repo.get_course_by_code(course_code)
@@ -148,6 +162,10 @@ def import_attendance_report_bytes(
         course_id=course_id,
         schedule_rows=schedule_rows,
         created_at=generated_at,
+    )
+    repo.update_course_total_meetings(
+        course_id=course_id,
+        total_meetings=total_meetings,
     )
 
     students_by_university_id = {
@@ -189,6 +207,33 @@ def import_attendance_report_bytes(
         window_label = row[attendance_headers[lecture_header]]
         stamped_at = row[attendance_headers[timestamp_header]]
         distance_m = row[attendance_headers["distance (m)"]]
+        attendance_status = (
+            _normalize(row[attendance_headers["attendance status"]]).lower()
+            if "attendance status" in attendance_headers
+            else "present"
+        )
+        if attendance_status not in {
+            "present",
+            "late",
+            "instructor_present",
+            "instructor_late",
+        }:
+            attendance_status = "present"
+        record_source = (
+            _normalize(row[attendance_headers["record source"]]).lower()
+            if "record source" in attendance_headers
+            else "import"
+        )
+        override_reason = (
+            _normalize(row[attendance_headers["exception reason"]])
+            if "exception reason" in attendance_headers
+            else ""
+        )
+        recorded_by = (
+            _normalize(row[attendance_headers["recorded by"]])
+            if "recorded by" in attendance_headers
+            else ""
+        )
 
         university_id = _normalize(student_id)
         student = students_by_university_id.get(university_id)
@@ -222,6 +267,17 @@ def import_attendance_report_bytes(
             accuracy_m=None,
             distance_m=float(distance_m or 0.0),
             device_info=placeholder_device_info,
+            schedule_label_snapshot=str(schedule["label"]),
+            schedule_start_time_snapshot=str(schedule["start_time"]),
+            schedule_end_time_snapshot=str(schedule["end_time"]),
+            reference_latitude=latitude,
+            reference_longitude=longitude,
+            reference_radius_m=radius_m,
+            attendance_status=attendance_status,
+            record_source=record_source or "import",
+            override_reason=override_reason,
+            recorded_by=recorded_by,
+            evidence_snapshot_source="report_import",
         )
         imported_attendance += 1
 

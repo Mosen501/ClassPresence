@@ -47,6 +47,7 @@ class AttendanceStampResult:
     success: bool
     message: str
     distance_m: float | None = None
+    status: str = ""
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,17 @@ def record_location_attempt(
             ),
             created_at=now.isoformat(),
             coordinate_cutoff_iso=(now - timedelta(days=30)).isoformat(),
+            reference_latitude=float(course["latitude"]),
+            reference_longitude=float(course["longitude"]),
+            schedule_label_snapshot=(
+                str(active_schedule["label"]) if active_schedule is not None else ""
+            ),
+            schedule_start_time_snapshot=(
+                str(active_schedule["start_time"]) if active_schedule is not None else ""
+            ),
+            schedule_end_time_snapshot=(
+                str(active_schedule["end_time"]) if active_schedule is not None else ""
+            ),
         )
     except Exception:
         # Diagnostics must never prevent device registration or attendance.
@@ -1213,6 +1225,8 @@ def stamp_attendance(
         )
 
     try:
+        attendance_deadline = _attendance_deadline(now, active_schedule)
+        attendance_status = "present" if now <= attendance_deadline else "late"
         repo.record_attendance(
             course_id=int(course["id"]),
             student_id=int(student["id"]),
@@ -1226,6 +1240,15 @@ def stamp_attendance(
             device_info=json.dumps(_sanitize_device_info(geolocation_payload)),
             registered_device_id=int(registered_device["id"]),
             device_binding_hash=attendance_device_hash,
+            schedule_label_snapshot=str(active_schedule["label"]),
+            schedule_start_time_snapshot=str(active_schedule["start_time"]),
+            schedule_end_time_snapshot=str(active_schedule["end_time"]),
+            reference_latitude=float(course["latitude"]),
+            reference_longitude=float(course["longitude"]),
+            reference_radius_m=float(course["radius_m"]),
+            attendance_status=attendance_status,
+            record_source="student",
+            evidence_snapshot_source="live_capture",
         )
     except Exception:
         if repo.attendance_exists(
@@ -1263,13 +1286,111 @@ def stamp_attendance(
             )
         raise
     accuracy_suffix = f" Reported GPS accuracy: {accuracy_m:.2f} m." if accuracy_m else ""
+    if attendance_status == "late":
+        return AttendanceStampResult(
+            success=True,
+            status="late",
+            message=(
+                f"Late arrival recorded for {active_schedule['label']} at {now.strftime('%H:%M')}. "
+                "It is kept in the audit history but does not count as on-time attendance."
+                f" Distance to classroom: {distance_m:.2f} m.{accuracy_suffix}"
+            ),
+            distance_m=distance_m,
+        )
     return AttendanceStampResult(
         success=True,
+        status="present",
         message=(
             f"Attendance stamped successfully for {active_schedule['label']} at {now.strftime('%H:%M')}."
             f" Distance to classroom: {distance_m:.2f} m.{accuracy_suffix}"
         ),
         distance_m=distance_m,
+    )
+
+
+def record_instructor_attendance_exception(
+    repo: AttendanceRepository,
+    settings: Settings,
+    *,
+    course,
+    student,
+    attendance_status: str,
+    reason: str,
+    actor_identifier: str,
+    in_person_confirmed: bool,
+) -> AttendanceStampResult:
+    """Record one bounded, auditable lecture exception after an in-person check."""
+    if not in_person_confirmed:
+        raise ValueError("Confirm that you verified the student in person.")
+    normalized_reason = reason.strip()
+    if len(normalized_reason) < 10:
+        raise ValueError("Enter a specific reason of at least 10 characters.")
+    if attendance_status not in {"instructor_present", "instructor_late"}:
+        raise ValueError("Select a valid instructor attendance status.")
+
+    now = now_in_app_timezone(settings)
+    if not _course_is_active_today(course, now):
+        raise ValueError("The course is outside its active dates.")
+    active_schedule = find_active_schedule(
+        repo.list_schedules_for_course(int(course["id"])),
+        now,
+    )
+    if active_schedule is None:
+        raise ValueError("Instructor exceptions can only be recorded during an active lecture.")
+    if now > _attendance_deadline(now, active_schedule):
+        attendance_status = "instructor_late"
+    attendance_date = now.date().isoformat()
+    if repo.attendance_exists(
+        course_id=int(course["id"]),
+        student_id=int(student["id"]),
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=attendance_date,
+    ):
+        raise ValueError("This student already has a record for the active lecture.")
+
+    failure_count = repo.count_location_failures_for_window(
+        course_id=int(course["id"]),
+        student_id=int(student["id"]),
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=attendance_date,
+    )
+    repo.record_attendance(
+        course_id=int(course["id"]),
+        student_id=int(student["id"]),
+        schedule_id=int(active_schedule["id"]),
+        attendance_date=attendance_date,
+        stamped_at=now.isoformat(),
+        student_latitude=float(course["latitude"]),
+        student_longitude=float(course["longitude"]),
+        accuracy_m=None,
+        distance_m=0.0,
+        device_info=json.dumps(
+            {
+                "instructor_exception": True,
+                "in_person_confirmed": True,
+                "prior_location_failures": failure_count,
+            }
+        ),
+        schedule_label_snapshot=str(active_schedule["label"]),
+        schedule_start_time_snapshot=str(active_schedule["start_time"]),
+        schedule_end_time_snapshot=str(active_schedule["end_time"]),
+        reference_latitude=float(course["latitude"]),
+        reference_longitude=float(course["longitude"]),
+        reference_radius_m=float(course["radius_m"]),
+        attendance_status=attendance_status,
+        record_source="instructor",
+        override_reason=normalized_reason,
+        recorded_by=actor_identifier,
+        evidence_snapshot_source="instructor_live",
+    )
+    label = "present" if attendance_status == "instructor_present" else "late"
+    return AttendanceStampResult(
+        success=True,
+        status=attendance_status,
+        message=(
+            f"Instructor-verified {label} record saved for {active_schedule['label']}. "
+            f"Prior failed location attempts: {failure_count}."
+        ),
     )
 
 
@@ -1507,6 +1628,21 @@ def _schedule_window_end(now: datetime, schedule) -> datetime:
         parse_hhmm(str(schedule["end_time"])),
         tzinfo=now.tzinfo,
     )
+
+
+def _attendance_deadline(now: datetime, schedule) -> datetime:
+    raw_grace_minutes = schedule.get("attendance_grace_minutes")
+    grace_minutes = max(
+        0,
+        min(60, int(raw_grace_minutes if raw_grace_minutes is not None else 10)),
+    )
+    start_time = parse_hhmm(str(schedule["start_time"]))
+    return now.replace(
+        hour=start_time.hour,
+        minute=start_time.minute,
+        second=0,
+        microsecond=0,
+    ) + timedelta(minutes=grace_minutes)
 
 
 def _require_access_context_window(

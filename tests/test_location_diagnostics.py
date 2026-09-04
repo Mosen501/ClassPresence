@@ -107,6 +107,29 @@ class LocationDiagnosticsTestCase(unittest.TestCase):
         self.assertEqual(audit[0]["reading_count"], 5)
         self.assertAlmostEqual(float(audit[0]["previous_latitude"]), 24.8)
 
+    def test_manual_location_and_radius_change_is_audited(self) -> None:
+        course = self.repo.get_course(self.course_id)
+        assert course is not None
+        self.repo.update_course(
+            course_id=self.course_id,
+            code=str(course["code"]),
+            title=str(course["title"]),
+            start_date=str(course["start_date"]),
+            end_date=str(course["end_date"]),
+            latitude=24.8001,
+            longitude=46.7001,
+            radius_m=60.0,
+            absence_limit_pct=float(course["absence_limit_pct"]),
+            actor_identifier="instructor",
+            updated_at="2026-09-01T10:00:00+03:00",
+        )
+
+        changes = self.repo.list_course_location_changes(course_id=self.course_id)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["change_type"], "manual_course_edit")
+        self.assertEqual(float(changes[0]["previous_radius_m"]), 50.0)
+        self.assertEqual(float(changes[0]["new_radius_m"]), 60.0)
+
     def test_reference_analysis_requires_repeated_evidence_and_flags_offset(self) -> None:
         course = self.repo.get_course(self.course_id)
         assert course is not None
@@ -146,6 +169,10 @@ class LocationDiagnosticsTestCase(unittest.TestCase):
         self.assertEqual(summary["total_attempts"], 2)
         self.assertEqual(summary["accepted"], 1)
         self.assertEqual(summary["reason_counts"]["outside_radius"], 1)
+        self.assertEqual(summary["attendance_windows_attempted"], 1)
+        self.assertEqual(summary["attendance_windows_completed"], 1)
+        self.assertEqual(summary["attendance_completion_rate"], 100.0)
+        self.assertEqual(summary["median_attempts_per_window"], 2.0)
         course = self.repo.get_course(self.course_id)
         assert course is not None
         report = build_location_diagnostics_xlsx(
@@ -167,6 +194,7 @@ class LocationDiagnosticsTestCase(unittest.TestCase):
                 "Lecture Analytics",
                 "Attempt Log",
                 "Calibration Audit",
+                "Location Rule Audit",
             ],
         )
 

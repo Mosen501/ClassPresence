@@ -118,6 +118,33 @@ class DeviceDatabaseTestCase(unittest.TestCase):
         )
         connect.assert_called_once_with()
 
+    def test_expired_device_enrollment_is_removed_from_pending_queue(self) -> None:
+        student = self.repo.get_student_for_course(int(self.course["id"]), "U1")
+        schedule = self.repo.list_schedules_for_course(int(self.course["id"]))[0]
+        assert student is not None
+        pending_id = self.repo.create_pending_device_enrollment(
+            student_id=int(student["id"]),
+            course_id=int(self.course["id"]),
+            schedule_id=int(schedule["id"]),
+            attendance_date="2026-08-01",
+            credential_id="pending-passkey",
+            public_key="pending-public-key",
+            device_binding_hash="pending-device-hash",
+            expires_at="2026-08-01T09:00:00+00:00",
+            created_at="2026-08-01T08:00:00+00:00",
+            auth_method="passkey",
+        )
+
+        pending = self.repo.list_pending_device_enrollments(
+            course_id=int(self.course["id"]),
+            now_iso="2026-08-01T09:01:00+00:00",
+        )
+
+        self.assertEqual(pending, [])
+        row = self.repo.get_pending_device_enrollment(pending_id)
+        assert row is not None
+        self.assertEqual(row["status"], "expired")
+
     def test_postgres_repository_starts_a_bounded_connection_pool(self) -> None:
         with patch("attendance_app.database.ConnectionPool") as pool_factory:
             pool = pool_factory.return_value
@@ -267,9 +294,26 @@ class DeviceDatabaseTestCase(unittest.TestCase):
                 for row in connection.execute("PRAGMA table_info(pending_browser_enrollments)")
             }
             audit_columns = {
-                str(row[1])
-                for row in connection.execute("PRAGMA table_info(device_audit_events)")
+                str(row[1]) for row in connection.execute("PRAGMA table_info(device_audit_events)")
             }
+            schedule_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(course_schedules)")
+            }
+            attendance_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(attendance_records)")
+            }
+            location_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(location_attempt_events)")
+            }
+            location_audit_table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("course_location_change_audit",),
+            ).fetchone()
+            credential_attempt_table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("credential_attempt_events",),
+            ).fetchone()
 
         self.assertIn("schedule_id", otp_columns)
         self.assertIn("attendance_date", otp_columns)
@@ -288,6 +332,27 @@ class DeviceDatabaseTestCase(unittest.TestCase):
         ):
             self.assertIn(column, pending_columns)
         self.assertIn("reason", audit_columns)
+        self.assertIn("attendance_grace_minutes", schedule_columns)
+        self.assertIn("archived_at", schedule_columns)
+        for column in (
+            "schedule_label_snapshot",
+            "schedule_start_time_snapshot",
+            "schedule_end_time_snapshot",
+            "reference_latitude",
+            "reference_longitude",
+            "reference_radius_m",
+            "attendance_status",
+            "record_source",
+            "override_reason",
+            "recorded_by",
+            "evidence_snapshot_source",
+        ):
+            self.assertIn(column, attendance_columns)
+        self.assertIn("reference_latitude", location_columns)
+        self.assertIn("schedule_label_snapshot", location_columns)
+        self.assertIn("evidence_snapshot_source", location_columns)
+        self.assertIsNotNone(location_audit_table)
+        self.assertIsNotNone(credential_attempt_table)
 
 
 if __name__ == "__main__":

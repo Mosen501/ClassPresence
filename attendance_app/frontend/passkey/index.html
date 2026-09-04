@@ -47,11 +47,11 @@
       let runningOperation = null;
       const messages = {
         en: {
-          register: "Register this device",
-          verify: "Verify this device",
+          register: "Use Face ID, fingerprint, or PIN",
+          verify: "Confirm with Face ID, fingerprint, or PIN",
           browserVerify: "Verify this registered device",
-          registerDescription: "Confirm with this device's screen lock to create its passkey.",
-          verifyDescription: "Your credential confirms this registered device.",
+          registerDescription: "Use this device's normal screen lock. No USB key is required.",
+          verifyDescription: "Use the same passkey or screen lock you registered before.",
           browserCredentialMissing: "The secure credential stored in this browser is missing.",
           unsupported: "Secure device verification is not supported on this device.",
           browserUnsupported: "Secure device storage is not supported on this device.",
@@ -62,11 +62,11 @@
           incomplete: "Device verification was not completed.",
         },
         ar: {
-          register: "تسجيل هذا الجهاز",
-          verify: "التحقق من هذا الجهاز",
+          register: "استخدم بصمة الوجه أو الإصبع أو PIN",
+          verify: "أكّد ببصمة الوجه أو الإصبع أو PIN",
           browserVerify: "التحقق من الجهاز المسجل",
-          registerDescription: "أكّد بقفل شاشة هذا الجهاز لإنشاء مفتاح المرور الخاص به.",
-          verifyDescription: "تؤكد بيانات الاعتماد هوية الجهاز المسجل.",
+          registerDescription: "استخدم قفل الشاشة المعتاد لهذا الجهاز. لا تحتاج إلى مفتاح USB.",
+          verifyDescription: "استخدم مفتاح المرور أو قفل الشاشة الذي سجلته سابقاً.",
           browserCredentialMissing: "بيانات الحماية المحفوظة في هذا المتصفح غير موجودة.",
           unsupported: "هذا الجهاز لا يدعم التحقق الآمن من الجهاز.",
           browserUnsupported: "هذا الجهاز لا يدعم التخزين الآمن لبيانات الجهاز.",
@@ -279,6 +279,8 @@
             action,
             error_name: "NotSupportedError",
             error: copy("unsupported"),
+            user_agent: navigator.userAgent,
+            platform: navigator.userAgentData?.platform || navigator.platform || "",
           });
           return;
         }
@@ -317,6 +319,8 @@
             device_token: deviceToken(),
             origin: window.location.origin,
             hostname: window.location.hostname,
+            user_agent: navigator.userAgent,
+            platform: navigator.userAgentData?.platform || navigator.platform || "",
           }, result));
           statusText.textContent = copy("verified");
         } catch (error) {
@@ -326,6 +330,8 @@
             device_token: deviceToken(),
             error_name: error && error.name ? error.name : "Error",
             error: detailedError(error),
+            user_agent: navigator.userAgent,
+            platform: navigator.userAgentData?.platform || navigator.platform || "",
           });
           statusText.textContent = copy("incomplete");
         } finally {

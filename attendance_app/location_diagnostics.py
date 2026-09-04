@@ -72,6 +72,28 @@ def summarize_location_events(events: Iterable[dict]) -> dict:
     )
     accepted = reason_counts["accepted"] + reason_counts["attendance_recorded"]
     failures = sum(reason_counts[reason] for reason in LOCATION_FAILURE_REASONS)
+    windows: dict[tuple[int, str, int, str], list[dict]] = defaultdict(list)
+    for row in rows:
+        key = (
+            int(row.get("student_id") or 0),
+            str(row.get("attendance_date") or ""),
+            int(row.get("schedule_id") or 0),
+            str(row.get("attempt_type") or "unknown"),
+        )
+        windows[key].append(row)
+    attendance_windows = {
+        key: attempts for key, attempts in windows.items() if key[3] == "attendance"
+    }
+    completed_attendance_windows = sum(
+        any(str(row.get("reason_code")) == "attendance_recorded" for row in attempts)
+        for attempts in attendance_windows.values()
+    )
+    unresolved_students = {
+        key[0]
+        for key, attempts in attendance_windows.items()
+        if not any(str(row.get("reason_code")) == "attendance_recorded" for row in attempts)
+    }
+    attempts_per_window = [len(attempts) for attempts in attendance_windows.values()]
     return {
         "total_attempts": len(rows),
         "unique_students": len(
@@ -82,6 +104,17 @@ def summarize_location_events(events: Iterable[dict]) -> dict:
         "diagnostic_attempts": diagnostic_attempts,
         "success_rate": (
             (accepted / diagnostic_attempts) * 100 if diagnostic_attempts else 0.0
+        ),
+        "attendance_windows_attempted": len(attendance_windows),
+        "attendance_windows_completed": completed_attendance_windows,
+        "attendance_completion_rate": (
+            (completed_attendance_windows / len(attendance_windows)) * 100
+            if attendance_windows
+            else 0.0
+        ),
+        "students_with_unresolved_failures": len(unresolved_students),
+        "median_attempts_per_window": (
+            float(median(attempts_per_window)) if attempts_per_window else 0.0
         ),
         "reason_counts": dict(reason_counts),
         "affected_students": {

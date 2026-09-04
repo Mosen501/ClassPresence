@@ -23,6 +23,7 @@ from attendance_app.services import (
     request_student_browser_key_enrollment,
     request_student_browser_key_recovery,
     request_student_passkey_enrollment,
+    record_instructor_attendance_exception,
     reset_student_device,
     resolve_active_student_session,
     resolve_registered_student_access_context,
@@ -389,7 +390,7 @@ class ServicesTestCase(unittest.TestCase):
 
     def test_attendance_stamp_uses_fresh_location_with_portal_device_session(self) -> None:
         course, student = self._seed_course()
-        now = datetime(2026, 7, 1, 10, 15, tzinfo=ZoneInfo("Asia/Riyadh"))
+        now = datetime(2026, 7, 1, 9, 15, tzinfo=ZoneInfo("Asia/Riyadh"))
         device_token = "test-device-token-00000001"
         device_hash = hash_device_token(device_token, self.settings.otp_pepper)
         device_id = self.repo.create_registered_device(
@@ -437,6 +438,165 @@ class ServicesTestCase(unittest.TestCase):
             ),
             1,
         )
+
+    def test_late_arrival_is_recorded_without_attendance_credit(self) -> None:
+        course, student = self._seed_course(attendance_grace_minutes=10)
+        now = datetime(2026, 7, 1, 10, 15, tzinfo=ZoneInfo("Asia/Riyadh"))
+        device_hash = hash_device_token(
+            "test-device-token-00000001",
+            self.settings.otp_pepper,
+        )
+        device_id = self.repo.create_registered_device(
+            student_id=int(student["id"]),
+            credential_id="late-credential",
+            public_key="late-public-key",
+            sign_count=0,
+            device_binding_hash=device_hash,
+            transports="[]",
+            aaguid="",
+            credential_device_type="multi_device",
+            credential_backed_up=True,
+            created_at=now.isoformat(),
+        )
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            result = stamp_attendance(
+                self.repo,
+                self.settings,
+                course=course,
+                student=student,
+                geolocation_payload={
+                    "latitude": TEST_COURSE_LATITUDE,
+                    "longitude": TEST_COURSE_LONGITUDE,
+                    "accuracy_m": 5,
+                    "captured_at": now.isoformat(),
+                    "device_token": "fresh-location-device-token-0001",
+                },
+                verified_device={
+                    "device_id": device_id,
+                    "credential_id": "late-credential",
+                    "device_binding_hash": device_hash,
+                    "auth_method": "passkey",
+                    "session_expires_at": "2026-07-01T22:00:00+03:00",
+                },
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "late")
+        self.assertEqual(
+            self.repo.count_attendance(
+                course_id=int(course["id"]),
+                student_id=int(student["id"]),
+            ),
+            0,
+        )
+        record = self.repo.list_attendance(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+        )[0]
+        self.assertEqual(record["attendance_status"], "late")
+
+    def test_instructor_exception_requires_presence_confirmation_and_is_audited(self) -> None:
+        course, student = self._seed_course()
+        now = datetime(2026, 7, 1, 9, 30, tzinfo=ZoneInfo("Asia/Riyadh"))
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            with self.assertRaisesRegex(ValueError, "verified the student in person"):
+                record_instructor_attendance_exception(
+                    self.repo,
+                    self.settings,
+                    course=course,
+                    student=student,
+                    attendance_status="instructor_present",
+                    reason="Location timed out repeatedly",
+                    actor_identifier="instructor",
+                    in_person_confirmed=False,
+                )
+            result = record_instructor_attendance_exception(
+                self.repo,
+                self.settings,
+                course=course,
+                student=student,
+                attendance_status="instructor_present",
+                reason="Location timed out repeatedly",
+                actor_identifier="instructor",
+                in_person_confirmed=True,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            self.repo.count_attendance(
+                course_id=int(course["id"]),
+                student_id=int(student["id"]),
+            ),
+            1,
+        )
+        record = self.repo.list_course_attendance(course_id=int(course["id"]))[0]
+        self.assertEqual(record["record_source"], "instructor")
+        self.assertEqual(record["recorded_by"], "instructor")
+        self.assertEqual(record["override_reason"], "Location timed out repeatedly")
+
+    def test_instructor_exception_cannot_credit_attendance_after_deadline(self) -> None:
+        course, student = self._seed_course(attendance_grace_minutes=10)
+        now = datetime(2026, 7, 1, 10, 30, tzinfo=ZoneInfo("Asia/Riyadh"))
+
+        with patch("attendance_app.services.now_in_app_timezone", return_value=now):
+            result = record_instructor_attendance_exception(
+                self.repo,
+                self.settings,
+                course=course,
+                student=student,
+                attendance_status="instructor_present",
+                reason="Location permission remained unavailable",
+                actor_identifier="instructor",
+                in_person_confirmed=True,
+            )
+
+        self.assertEqual(result.status, "instructor_late")
+        self.assertEqual(
+            self.repo.count_attendance(
+                course_id=int(course["id"]),
+                student_id=int(student["id"]),
+            ),
+            0,
+        )
+        record = self.repo.list_course_attendance(course_id=int(course["id"]))[0]
+        self.assertEqual(record["attendance_status"], "instructor_late")
+
+    def test_archiving_schedule_preserves_attendance_evidence_snapshot(self) -> None:
+        course, student = self._seed_course()
+        schedule = self.repo.list_schedules_for_course(int(course["id"]))[0]
+        self.repo.record_attendance(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+            schedule_id=int(schedule["id"]),
+            attendance_date="2026-07-01",
+            stamped_at="2026-07-01T09:05:00+03:00",
+            student_latitude=TEST_COURSE_LATITUDE,
+            student_longitude=TEST_COURSE_LONGITUDE,
+            accuracy_m=5,
+            distance_m=0,
+            device_info="{}",
+            schedule_label_snapshot="Morning Lecture",
+            schedule_start_time_snapshot="09:00",
+            schedule_end_time_snapshot="11:00",
+            reference_latitude=TEST_COURSE_LATITUDE,
+            reference_longitude=TEST_COURSE_LONGITUDE,
+            reference_radius_m=3,
+        )
+
+        self.repo.sync_course_schedules(
+            course_id=int(course["id"]),
+            schedule_rows=[],
+            created_at="2026-07-02T08:00:00+03:00",
+        )
+
+        self.assertEqual(self.repo.list_schedules_for_course(int(course["id"])), [])
+        record = self.repo.list_attendance(
+            course_id=int(course["id"]),
+            student_id=int(student["id"]),
+        )[0]
+        self.assertEqual(record["schedule_label"], "Morning Lecture")
 
     def test_browser_key_fallback_requires_manager_approval_and_authenticates(self) -> None:
         course, student = self._seed_course()
@@ -1043,7 +1203,12 @@ class ServicesTestCase(unittest.TestCase):
 
         self.assertIsNone(otp_delivery_configuration_error(email_settings))
 
-    def _seed_course(self, *, end_date: str = "2026-07-31"):
+    def _seed_course(
+        self,
+        *,
+        end_date: str = "2026-07-31",
+        attendance_grace_minutes: int = 60,
+    ):
         created_at = "2026-06-25T08:00:00+03:00"
         self.repo.create_course(
             code="MAT1116",
@@ -1075,6 +1240,7 @@ class ServicesTestCase(unittest.TestCase):
             start_time="09:00",
             end_time="11:00",
             created_at=created_at,
+            attendance_grace_minutes=attendance_grace_minutes,
         )
         student = self.repo.get_student_for_course(int(course["id"]), "20260001")
         assert student is not None

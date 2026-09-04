@@ -15,7 +15,7 @@ from openpyxl.utils import get_column_letter
 
 from attendance_app.utils import generate_expected_occurrences, weekday_label
 
-REPORT_VERSION = "2.1"
+REPORT_VERSION = "2.2"
 REPORT_SHEETS = [
     "Executive Summary",
     "Course Details",
@@ -87,6 +87,13 @@ def build_course_report_xlsx(
         generated_at=generated_at,
         roster_count=len(students),
     )
+    total_occurrences = generate_expected_occurrences(
+        course["start_date"],
+        course["end_date"] or course["start_date"],
+        schedules,
+        generated_at,
+        only_elapsed=False,
+    )
 
     workbook = Workbook()
     workbook.remove(workbook.active)
@@ -98,7 +105,12 @@ def build_course_report_xlsx(
     workbook.calculation.forceFullCalc = True
     workbook.calculation.calcMode = "auto"
 
-    _build_course_details_sheet(sheets["Course Details"], course, generated_at)
+    _build_course_details_sheet(
+        sheets["Course Details"],
+        course,
+        generated_at,
+        generated_total_meetings=len(total_occurrences),
+    )
     roster_last_row = _build_roster_sheet(sheets["Roster"], students)
     timetable_last_row = _build_timetable_sheet(sheets["Timetable"], schedules)
     attendance_last_row = _build_attendance_sheet(
@@ -342,7 +354,13 @@ def _build_executive_summary(
     sheet.sheet_view.zoomScale = 85
 
 
-def _build_course_details_sheet(sheet, course, generated_at: datetime) -> None:
+def _build_course_details_sheet(
+    sheet,
+    course,
+    generated_at: datetime,
+    *,
+    generated_total_meetings: int,
+) -> None:
     _prepare_sheet(
         sheet,
         title="Course Details",
@@ -356,7 +374,7 @@ def _build_course_details_sheet(sheet, course, generated_at: datetime) -> None:
         ("Course Name", course["title"]),
         ("Start Date", _excel_date(course["start_date"])),
         ("End Date", _excel_date(course["end_date"] or course["start_date"])),
-        ("Total Meetings", int(course["total_meetings"])),
+        ("Total Meetings", generated_total_meetings),
         ("Latitude", float(course["latitude"])),
         ("Longitude", float(course["longitude"])),
         ("Allowed Radius (m)", float(course["radius_m"])),
@@ -446,17 +464,22 @@ def _build_timetable_sheet(sheet, schedules: list) -> int:
         sheet,
         title="Timetable",
         subtitle="Weekly lecture windows controlling student access",
-        headers=["Weekday", "Window Label", "Start Time", "End Time"],
+        headers=["Weekday", "Window Label", "Start Time", "End Time", "On-time Grace (min)"],
         rows=[
             [
                 weekday_label(int(schedule["weekday"])),
                 schedule["label"],
                 schedule["start_time"],
                 schedule["end_time"],
+                int(
+                    schedule.get("attendance_grace_minutes")
+                    if schedule.get("attendance_grace_minutes") is not None
+                    else 10
+                ),
             ]
             for schedule in schedules
         ],
-        widths=[18, 30, 16, 16],
+        widths=[18, 30, 16, 16, 22],
     )
 
 
@@ -470,8 +493,16 @@ def _build_attendance_sheet(sheet, attendance_records: list) -> int:
         "Scheduled Start",
         "Scheduled End",
         "Checked In",
+        "Attendance Status",
+        "Record Source",
+        "Exception Reason",
+        "Recorded By",
+        "Evidence Snapshot",
         "Latitude",
         "Longitude",
+        "Reference Latitude",
+        "Reference Longitude",
+        "Reference Radius (m)",
         "Distance (m)",
         "GPS Accuracy (m)",
         "Verification",
@@ -490,29 +521,41 @@ def _build_attendance_sheet(sheet, attendance_records: list) -> int:
                 row.get("schedule_start_time") or "",
                 row.get("schedule_end_time") or "",
                 _excel_datetime(row["stamped_at"]),
+                str(row.get("attendance_status") or "present"),
+                str(row.get("record_source") or "student"),
+                row.get("override_reason") or "",
+                row.get("recorded_by") or "",
+                str(row.get("evidence_snapshot_source") or "unspecified"),
                 _optional_float(row.get("student_latitude")),
                 _optional_float(row.get("student_longitude")),
+                _optional_float(row.get("reference_latitude")),
+                _optional_float(row.get("reference_longitude")),
+                _optional_float(row.get("reference_radius_m")),
                 float(row["distance_m"]),
                 _optional_float(row.get("accuracy_m")),
-                "Registered device verified"
-                if registered_device_id or row.get("device_binding_hash")
-                else "Imported / legacy",
+                (
+                    "Instructor identity and presence check"
+                    if str(row.get("record_source") or "student") == "instructor"
+                    else "Registered passkey and fresh location verified"
+                    if registered_device_id or row.get("device_binding_hash")
+                    else "Imported / legacy"
+                ),
                 _device_reference(registered_device_id, row.get("device_binding_hash")),
             ]
         )
     last_row = _build_table_sheet(
         sheet,
         title="Attendance Records",
-        subtitle="Complete location and device-verification evidence for every check-in",
+        subtitle="Decision evidence for every check-in, including legacy/import provenance",
         headers=headers,
         rows=rows,
-        widths=[12, 28, 18, 14, 24, 16, 16, 22, 15, 15, 16, 18, 22, 20],
+        widths=[12, 28, 18, 14, 24, 16, 16, 22, 20, 16, 36, 20, 20, 15, 15, 18, 18, 20, 16, 18, 34, 20],
     )
     _format_date_columns(sheet, last_row, [4])
     _format_datetime_columns(sheet, last_row, [8])
-    _format_decimal_columns(sheet, last_row, [9, 10], "0.000000")
-    _format_decimal_columns(sheet, last_row, [11, 12], "0.0")
-    _format_text_columns(sheet, last_row, [3, 14])
+    _format_decimal_columns(sheet, last_row, [14, 15, 16, 17], "0.000000")
+    _format_decimal_columns(sheet, last_row, [18, 19, 20], "0.0")
+    _format_text_columns(sheet, last_row, [3, 22])
     return last_row
 
 
@@ -808,6 +851,11 @@ def _build_lecture_analytics(
     counts: Counter[tuple[int, str]] = Counter()
     fallback_counts: Counter[tuple[str, str]] = Counter()
     for row in attendance_records:
+        if str(row.get("attendance_status") or "present") not in {
+            "present",
+            "instructor_present",
+        }:
+            continue
         attendance_date = str(row["attendance_date"])
         if row.get("schedule_id") is not None:
             counts[(int(row["schedule_id"]), attendance_date)] += 1

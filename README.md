@@ -1,8 +1,8 @@
 # AttendancApp
 
-AttendancApp is a Streamlit-based attendance platform for university classes. It gives academic managers a protected portal for configuring courses, defining class meeting windows, syncing official rosters, exporting Excel reports, and geofencing attendance to a configurable classroom radius.
+AttendancApp is a Streamlit-based attendance platform for university classes. It gives instructors a protected portal for configuring courses, defining class meeting windows, syncing official rosters, exporting Excel reports, and geofencing attendance to a configurable classroom radius.
 
-Students register one device from the classroom using their roster ID, fresh location evidence, a WebAuthn passkey, and in-person instructor approval. After registration they can open the portal from anywhere with that authenticator, while the attendance action silently captures a fresh location and stamps attendance only during approved schedule windows. The application also flags exam ineligibility when absences reach 20% of the configured total meetings.
+Students register a passkey from the classroom using their roster ID, fresh location evidence, and in-person instructor approval. After registration they can open the portal with that authenticator, while each attendance action captures new multi-sample location evidence and is evaluated against the server's current lecture and on-time deadline. The application also flags exam ineligibility when absences reach the configured threshold.
 
 ## Features
 
@@ -10,19 +10,36 @@ Students register one device from the classroom using their roster ID, fresh loc
 - Course setup with course code, course name, start date, end date, timetable windows, classroom location, and attendance radius
 - Bulk student import from `.xlsx` or `.csv` with `student id`, `student name`, and `email` columns
 - Roster-only enrollment workflow so students must exist on the uploaded course roster
-- One-time classroom device enrollment with roster identity, fresh location, WebAuthn, and instructor approval
-- Location-free portal access from the registered device after enrollment
-- Strict classification for non-synchronized single-device credentials and compatibility classification for synchronized credentials
-- Single attendance button that captures fresh location and stamps attendance atomically
+- One-time classroom passkey enrollment with roster identity, fresh location, and instructor approval
+- Platform-first passkey prompts that direct students to Face ID, fingerprint, or screen PIN instead of a USB security key
+- Location-free portal access after passkey verification; location is collected again for every attendance submission
+- Explicit classification of synchronized passkeys as compatibility credentials, not proof of one physical device
+- A single attendance action that samples location for up to 20 seconds and keeps the most accurate fresh reading
 - Initial enrollment and instructor approval expire when the active lecture window ends
-- One-student-per-device enforcement for every lecture window
+- One-credential/session-per-student enforcement and replay blocking for every lecture window
+- A configurable on-time grace period; later submissions remain visible as late but receive no attendance credit
+- Instructor-entered one-lecture exceptions only during an active lecture, with required in-person confirmation, reason, actor, and audit evidence
+- Immutable schedule and classroom-rule snapshots on attendance and location-attempt records
+- Soft-archived timetable windows so later timetable edits do not destroy historical attendance evidence
+- Audited classroom coordinate and radius changes
 - Manager device resets available during live lectures with permanent audit history
-- Security incident log for blocked proxy attempts with manager review and device reset
+- Security incident log for blocked proxy attempts plus passkey failure diagnostics by browser and platform
 - End-to-end Excel reporting with executive summary, course details, roster and device status, timetable, attendance evidence, student performance, lecture analytics, security alerts, device audit, and OTP activity
 - Geofenced attendance stamping within a configurable radius that defaults to 3 meters
-- Attendance records with timestamp, device information, and location distance checks
+- Attendance records with status, source, timestamp, device information, location evidence, and the exact rules used for the decision
 - Student dashboard with attendance totals, absences, and exam-entry status
+- Encrypted full and pre-reset backups using AES-256-GCM; plaintext student and security data is never placed in the downloaded backup
 - PostgreSQL-ready storage for production deployments, with SQLite kept as a local fallback
+
+## Fraud controls and limits
+
+The app is designed to detect and constrain three practical attendance abuses without requiring a classroom beacon, a native phone app, or university SSO:
+
+- Remote check-in is rejected when fresh device geolocation is outside the configured classroom radius or too inaccurate.
+- Covering for another student is constrained by roster identity, passkey verification, one record per student/window, device-session replay checks, and incident logging.
+- Late check-in is timestamped by the server. The instructor controls a per-window grace period, and a submission after that deadline is stored as `late` without attendance credit.
+
+These controls create reviewable evidence; they do not provide mathematical proof of physical presence. Browser geolocation can be spoofed on a compromised client, a synchronized passkey can be available on more than one device, and a student can cooperate with another person. The product therefore does not describe passkeys as permanent physical-device identity. Instructor identity checks and the audited one-lecture exception are the bounded fallback when location or passkey handling fails for a student who is visibly in the room.
 
 ## Project Structure
 
@@ -95,13 +112,16 @@ Copy `.env.example` values into your shell environment or deployment platform.
 
 - Device geolocation usually requires `localhost` during local development or HTTPS in deployment.
 - Secure device verification requires `localhost` or HTTPS. For production, set `WEBAUTHN_ORIGIN` and `WEBAUTHN_RP_ID` if the public URL cannot be inferred correctly.
-- A student enrolls one device after an in-class location check, WebAuthn creation, and in-person instructor approval. Returning portal access verifies the registered passkey but does not request location.
+- A student enrolls a passkey after an in-class location check and in-person instructor approval. Returning portal access verifies the registered passkey but does not request location until attendance is submitted.
 - Registered-device portal sessions last up to 12 hours and can be opened from any location. Course status and history remain available even when no lecture window is active.
-- During an active lecture, one attendance button gathers several fresh high-accuracy readings, selects the best reading, verifies the registered device binding, checks the classroom radius, and records attendance in one server-side operation.
-- WebAuthn credentials reported as non-backed-up `single_device` credentials receive strict status. Synchronized, multi-device, or unclassified credentials receive compatibility status and continue using the same classroom location checks.
+- During an active lecture, one attendance button gathers fresh readings for up to 20 seconds, selects the best reading, verifies the registered passkey session, checks the classroom radius, and records the result in one server-side operation.
+- The server decides whether a submission is on time. A late record is retained for review but is excluded from attendance totals, eligibility calculations, dashboards, and lecture analytics.
+- WebAuthn credentials reported as non-backed-up `single_device` credentials receive strict status. Synchronized, multi-device, or unclassified credentials receive compatibility status and continue using the same classroom location checks; they are not treated as physical-device proof.
 - New browser-storage credentials are no longer created. Existing browser-key registrations remain usable only through each linked course's end date so students have the semester to migrate.
-- If an authenticator is lost or replaced, a manager must enter a reason and reset it from Security. Every approval and reset remains in the permanent device audit history.
+- If an authenticator is lost or replaced, an instructor must enter a reason and reset it from Security. Every approval and reset remains in the permanent device audit history.
+- If passkey or location verification fails during class, the instructor can create a record for that lecture only after checking the student's identity and physical presence. This does not replace or silently recover the semester credential.
 - Excel reports include complete report-safe activity without row caps. OTP values and hashes, device security keys, credential IDs, and raw device-binding hashes are never exported.
+- Downloaded manager backups are password-encrypted and use the `.cpbackup` extension. Decrypt one locally with `python scripts/decrypt_backup.py input.cpbackup output.json`; keep the password separate because the app cannot recover it.
 - The manager location picker uses OpenStreetMap tiles, so internet access helps the map render during local testing.
 - GPS accuracy can drift indoors. The app enforces the configured radius, but device-reported accuracy should still be reviewed during rollout.
 - The first run creates the database schema automatically for either SQLite or PostgreSQL.
@@ -114,8 +134,9 @@ Copy `.env.example` values into your shell environment or deployment platform.
 
 ## Testing
 
-The repository includes unit and workflow tests for schedules, distance checks, WebAuthn
-device registration and approval, legacy migration, reporting, and roster parsing.
+The repository includes unit and workflow tests for schedules, on-time and late decisions,
+audited exceptions, evidence preservation, location checks, WebAuthn registration and
+approval, encrypted backups, reporting, and roster parsing.
 
 ```bash
 python3 -m unittest discover -s tests

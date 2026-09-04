@@ -58,6 +58,7 @@
           description: "Location is used to confirm classroom distance.",
           unsupported: "This device does not support geolocation.",
           requesting: "Requesting device location...",
+          improving: "Improving accuracy — best reading: {accuracy} m",
           captured: "Location captured. The app will validate the attendance stamp now.",
           unavailable: "Unable to retrieve your location.",
           denied: "Location access was denied. Allow location access and try again.",
@@ -67,6 +68,7 @@
           description: "يُستخدم الموقع للتحقق من وجودك داخل القاعة.",
           unsupported: "هذا الجهاز لا يدعم تحديد الموقع.",
           requesting: "جارٍ تحديد موقع الجهاز...",
+          improving: "جارٍ تحسين الدقة — أفضل قراءة: {accuracy} متر",
           captured: "تم تحديد الموقع وسيتم التحقق منه الآن.",
           unavailable: "تعذر تحديد موقعك. حاول مرة أخرى.",
           denied: "تم رفض الوصول إلى الموقع. اسمح بالوصول ثم حاول مرة أخرى.",
@@ -76,6 +78,13 @@
 
       function copy(key) {
         return messages[locale][key];
+      }
+
+      function formatCopy(key, values) {
+        return Object.entries(values).reduce(
+          (message, [name, value]) => message.replace(`{${name}}`, value),
+          copy(key)
+        );
       }
 
       function sendMessageToStreamlitClient(type, data) {
@@ -210,13 +219,13 @@
           button.disabled = false;
         };
 
+        collectionTimer = setTimeout(() => finish(), 20000);
         watchId = navigator.geolocation.watchPosition(
           (position) => {
             readings.push(position);
-            if (collectionTimer === null) {
-              collectionTimer = setTimeout(() => finish(), 4000);
-            }
-            if (position.coords.accuracy <= 15 || readings.length >= 3) finish();
+            const bestAccuracy = Math.min(...readings.map((reading) => reading.coords.accuracy));
+            setStatus(formatCopy("improving", { accuracy: bestAccuracy.toFixed(0) }));
+            if (position.coords.accuracy <= 15) finish();
           },
           (error) => finish(error),
           {

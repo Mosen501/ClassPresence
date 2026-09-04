@@ -14,6 +14,7 @@ from webauthn import (
 )
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from webauthn.helpers.structs import (
+    AuthenticatorAttachment,
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
@@ -63,6 +64,7 @@ def build_registration_options(
     student_id: int,
     university_id: str,
     student_name: str,
+    prefer_platform: bool = False,
 ) -> tuple[str, str]:
     options = generate_registration_options(
         rp_id=rp_id,
@@ -71,6 +73,9 @@ def build_registration_options(
         user_name=university_id,
         user_display_name=student_name,
         authenticator_selection=AuthenticatorSelectionCriteria(
+            authenticator_attachment=(
+                AuthenticatorAttachment.PLATFORM if prefer_platform else None
+            ),
             resident_key=ResidentKeyRequirement.PREFERRED,
             user_verification=UserVerificationRequirement.REQUIRED,
         ),

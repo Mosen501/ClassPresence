@@ -22,6 +22,7 @@ def build_location_diagnostics_xlsx(
     course: dict,
     events: list[dict],
     calibrations: list[dict],
+    location_changes: list[dict] | None = None,
     reference_analysis: dict,
     generated_at: str,
 ) -> bytes:
@@ -45,7 +46,12 @@ def build_location_diagnostics_xlsx(
             ["Unique students", summary["unique_students"]],
             ["Accepted", summary["accepted"]],
             ["Location failures", summary["failures"]],
-            ["Success rate", summary["success_rate"] / 100],
+            ["Attempt success rate", summary["success_rate"] / 100],
+            ["Attendance windows attempted", summary["attendance_windows_attempted"]],
+            ["Attendance windows completed", summary["attendance_windows_completed"]],
+            ["Attendance completion rate", summary["attendance_completion_rate"] / 100],
+            ["Students with unresolved failures", summary["students_with_unresolved_failures"]],
+            ["Median attempts per window", summary["median_attempts_per_window"]],
             ["Recovered failures", summary["recovered_failures"]],
             ["Reference status", reference_analysis["status"]],
             ["Reference offset (m)", reference_analysis.get("offset_m")],
@@ -54,7 +60,8 @@ def build_location_diagnostics_xlsx(
             ["Reference analysis", reference_analysis["message"]],
         ],
     )
-    summary_sheet["B10"].number_format = "0.0%"
+    summary_sheet["B11"].number_format = "0.0%"
+    summary_sheet["B14"].number_format = "0.0%"
 
     reason_sheet = workbook.create_sheet("Failure Reasons")
     reason_rows = []
@@ -87,7 +94,9 @@ def build_location_diagnostics_xlsx(
             row["reason_counts"].get("poor_accuracy", 0),
             row["reason_counts"].get("permission_denied", 0),
             row["reason_counts"].get("timeout", 0),
-            row["success_rate"] / 100,
+            row["attendance_windows_attempted"],
+            row["attendance_windows_completed"],
+            row["attendance_completion_rate"] / 100,
         ]
         for row in build_lecture_location_summary(events)
     ]
@@ -103,11 +112,13 @@ def build_location_diagnostics_xlsx(
             "Poor accuracy",
             "Permission denied",
             "Timeout",
-            "Success rate",
+            "Attendance windows attempted",
+            "Attendance windows completed",
+            "Attendance completion rate",
         ],
         lecture_rows,
     )
-    for cell in lecture_sheet["J"][1:]:
+    for cell in lecture_sheet["L"][1:]:
         cell.number_format = "0.0%"
 
     attempts_sheet = workbook.create_sheet("Attempt Log")
@@ -117,6 +128,7 @@ def build_location_diagnostics_xlsx(
             "Time",
             "Date",
             "Window",
+            "Evidence snapshot",
             "Student",
             "Student ID",
             "Type",
@@ -127,6 +139,8 @@ def build_location_diagnostics_xlsx(
             "Radius (m)",
             "Latitude",
             "Longitude",
+            "Reference latitude",
+            "Reference longitude",
             "Platform",
             "Browser",
             "Recovered",
@@ -137,6 +151,7 @@ def build_location_diagnostics_xlsx(
                 row.get("created_at"),
                 row.get("attendance_date"),
                 row.get("schedule_label") or "",
+                row.get("evidence_snapshot_source") or "unspecified",
                 row.get("full_name") or "",
                 row.get("university_id") or "",
                 row.get("attempt_type"),
@@ -149,6 +164,8 @@ def build_location_diagnostics_xlsx(
                 row.get("radius_m"),
                 row.get("latitude"),
                 row.get("longitude"),
+                row.get("reference_latitude"),
+                row.get("reference_longitude"),
                 row.get("platform"),
                 row.get("browser_family"),
                 "Yes" if row.get("recovered_at") else "No",
@@ -183,6 +200,36 @@ def build_location_diagnostics_xlsx(
                 row["median_accuracy_m"],
             ]
             for row in calibrations
+        ],
+    )
+
+    location_audit_sheet = workbook.create_sheet("Location Rule Audit")
+    _write_rows(
+        location_audit_sheet,
+        [
+            "Time",
+            "Manager",
+            "Change type",
+            "Previous latitude",
+            "Previous longitude",
+            "Previous radius (m)",
+            "New latitude",
+            "New longitude",
+            "New radius (m)",
+        ],
+        [
+            [
+                row["created_at"],
+                row["actor_identifier"],
+                row["change_type"],
+                row["previous_latitude"],
+                row["previous_longitude"],
+                row["previous_radius_m"],
+                row["new_latitude"],
+                row["new_longitude"],
+                row["new_radius_m"],
+            ]
+            for row in (location_changes or [])
         ],
     )
 

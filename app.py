@@ -33,6 +33,7 @@ if not hasattr(passkeys_module, "passkey_trust_level"):
 if not hasattr(services_module, "request_student_passkey_enrollment"):
     services_module = reload(services_module)
 
+from attendance_app.backups import encrypt_backup_payload
 from attendance_app.browser_keys import build_browser_key_options
 from attendance_app.components import (
     geo_capture,
@@ -44,6 +45,7 @@ from attendance_app.config import load_settings
 from attendance_app.location_diagnostics import (
     LOCATION_REASON_LABELS,
     analyze_classroom_reference,
+    browser_family,
     build_lecture_location_summary,
     summarize_location_events,
 )
@@ -58,7 +60,9 @@ from attendance_app.services import (
     authenticate_student_browser_key,
     authenticate_student_passkey,
     build_student_attendance_summary,
+    find_active_schedule,
     now_in_app_timezone,
+    record_instructor_attendance_exception,
     record_location_attempt,
     request_student_passkey_enrollment,
     reset_student_device,
@@ -69,6 +73,7 @@ from attendance_app.services import (
     stamp_attendance,
 )
 from attendance_app.utils import (
+    generate_expected_occurrences,
     haversine_distance_m,
     parse_hhmm,
     parse_iso_date,
@@ -85,6 +90,9 @@ DATA_MANAGEMENT_REPOSITORY_METHODS = (
     "anonymize_location_coordinates_before",
     "apply_course_location_calibration",
     "list_course_location_calibrations",
+    "list_course_location_changes",
+    "create_credential_attempt_event",
+    "list_credential_attempt_events",
     "close",
     "check_connections",
 )
@@ -106,6 +114,7 @@ def build_course_report_xlsx(**kwargs) -> bytes:
     from attendance_app.reports import build_course_report_xlsx as build_report
 
     return build_report(**kwargs)
+
 
 APP_CSS = """
 <style>
@@ -1488,6 +1497,7 @@ def _render_manager_workspace(repo: AttendanceRepository, settings) -> None:
                 st.session_state["manager_prepared_report"] = None
                 st.session_state["manager_reset_package"] = None
                 st.session_state["manager_full_backup"] = None
+                st.session_state["manager_backup_passphrase"] = ""
                 st.session_state["manager_location_report"] = None
                 st.session_state["manager_calibration_readings"] = []
                 st.session_state["active_role"] = None
@@ -1583,6 +1593,7 @@ def _render_manager_timetable(repo: AttendanceRepository, settings, course) -> N
                 "label",
                 "start_time",
                 "end_time",
+                "attendance_grace_minutes",
                 "Monday",
                 "Tuesday",
                 "Wednesday",
@@ -1595,6 +1606,14 @@ def _render_manager_timetable(repo: AttendanceRepository, settings, course) -> N
                 "label": st.column_config.TextColumn("Window", width="medium", required=True),
                 "start_time": st.column_config.TextColumn("Start", width="small", required=True),
                 "end_time": st.column_config.TextColumn("End", width="small", required=True),
+                "attendance_grace_minutes": st.column_config.NumberColumn(
+                    "On-time grace (min)",
+                    width="small",
+                    min_value=0,
+                    max_value=60,
+                    step=1,
+                    required=True,
+                ),
                 **{
                     day_name: st.column_config.CheckboxColumn(day_name[:3], width="small")
                     for day_name, _ in TIMETABLE_DAY_COLUMNS
@@ -1840,18 +1859,140 @@ def _render_manager_attendance(repo: AttendanceRepository, settings, course) -> 
         10000,
     )
     today = now_in_app_timezone(settings).date().isoformat()
-    unique_students = len({str(row["university_id"]) for row in records})
+    credited_records = [
+        row
+        for row in records
+        if str(row.get("attendance_status") or "present")
+        in {"present", "instructor_present"}
+    ]
+    late_records = [
+        row
+        for row in records
+        if str(row.get("attendance_status") or "present")
+        in {"late", "instructor_late"}
+    ]
+    unique_students = len({str(row["university_id"]) for row in credited_records})
+    location_verified_records = [
+        row for row in records if str(row.get("record_source") or "student") == "student"
+    ]
     average_distance = (
-        sum(float(row["distance_m"]) for row in records) / len(records) if records else 0.0
+        sum(float(row["distance_m"]) for row in location_verified_records)
+        / len(location_verified_records)
+        if location_verified_records
+        else 0.0
     )
     _render_metrics(
         [
-            ("Total stamps", len(records), "all lecture windows"),
-            ("Today", sum(str(row["attendance_date"]) == today for row in records), "current day"),
+            ("On-time", len(credited_records), "credited attendance"),
+            ("Late", len(late_records), "recorded, not credited"),
             ("Students", unique_students, "with attendance"),
             ("Avg. distance", f"{average_distance:.1f}m", "from classroom"),
         ]
     )
+    now = now_in_app_timezone(settings)
+    active_schedule = find_active_schedule(
+        _cached_list_schedules(settings.database_target, int(course["id"])),
+        now,
+    )
+    with st.expander("Instructor exception for this lecture", expanded=False):
+        st.caption(
+            "Use only after checking the student's identity and physical presence in the room. "
+            "The decision, reason, manager, and original lecture rules are retained."
+        )
+        if active_schedule is None:
+            st.info("No lecture is active. Exceptions cannot be entered outside a lecture window.")
+        else:
+            schedule_start = parse_hhmm(str(active_schedule["start_time"]))
+            grace_value = active_schedule.get("attendance_grace_minutes")
+            grace_minutes = max(
+                0,
+                min(60, int(grace_value if grace_value is not None else 10)),
+            )
+            exception_deadline = now.replace(
+                hour=schedule_start.hour,
+                minute=schedule_start.minute,
+                second=0,
+                microsecond=0,
+            ) + timedelta(minutes=grace_minutes)
+            can_credit_exception = now <= exception_deadline
+            if not can_credit_exception:
+                st.warning(
+                    f"The on-time deadline was {exception_deadline.strftime('%H:%M')}. "
+                    "Any exception entered now is recorded as late without attendance credit."
+                )
+            students = _cached_list_students(settings.database_target, int(course["id"]))
+            existing_student_ids = {
+                int(row["student_id"])
+                for row in repo.list_course_attendance_for_report(course_id=int(course["id"]))
+                if int(row["schedule_id"]) == int(active_schedule["id"])
+                and str(row["attendance_date"]) == today
+            }
+            eligible_students = [
+                student for student in students if int(student["id"]) not in existing_student_ids
+            ]
+            if not eligible_students:
+                st.info("Every enrolled student already has a record for this lecture.")
+            else:
+                labels = {
+                    int(student["id"]): (
+                        f"{student['university_id']} · {student['full_name']}"
+                    )
+                    for student in eligible_students
+                }
+                with st.form(f"attendance_exception_{course['id']}_{active_schedule['id']}"):
+                    student_id = st.selectbox(
+                        "Student",
+                        list(labels),
+                        format_func=lambda value: labels[value],
+                    )
+                    status_label = st.radio(
+                        "Decision",
+                        (
+                            ["Present — credit attendance", "Late — record without credit"]
+                            if can_credit_exception
+                            else ["Late — record without credit"]
+                        ),
+                    )
+                    reason = st.text_area(
+                        "Specific reason",
+                        placeholder="Example: location timed out three times; identity checked at seat 14.",
+                    )
+                    confirmed = st.checkbox(
+                        "I checked this student's identity and physical presence in the classroom."
+                    )
+                    save_exception = st.form_submit_button(
+                        "Record one-lecture exception",
+                        type="primary",
+                        width="stretch",
+                    )
+                if save_exception:
+                    try:
+                        student = next(
+                            row for row in eligible_students if int(row["id"]) == int(student_id)
+                        )
+                        result = record_instructor_attendance_exception(
+                            repo,
+                            settings,
+                            course=course,
+                            student=student,
+                            attendance_status=(
+                                "instructor_present"
+                                if status_label.startswith("Present")
+                                else "instructor_late"
+                            ),
+                            reason=reason,
+                            actor_identifier=str(
+                                (st.session_state.get("manager_auth") or {}).get(
+                                    "username", "manager"
+                                )
+                            ),
+                            in_person_confirmed=confirmed,
+                        )
+                        _invalidate_read_caches(attendance=True, reports=True)
+                        st.session_state["manager_notice"] = result.message
+                        st.rerun()
+                    except Exception as error:
+                        st.error(str(error))
     if not records:
         _empty_state("No attendance has been recorded for this course.")
         return
@@ -1863,6 +2004,13 @@ def _render_manager_attendance(repo: AttendanceRepository, settings, course) -> 
                 "Student ID": row["university_id"],
                 "Window": row["schedule_label"],
                 "Time": str(row["stamped_at"])[11:16],
+                "Status": str(row.get("attendance_status") or "present").replace("_", " ").title(),
+                "Source": str(row.get("record_source") or "student").title(),
+                "Evidence": str(row.get("evidence_snapshot_source") or "unspecified")
+                .replace("_", " ")
+                .title(),
+                "Exception reason": row.get("override_reason") or "",
+                "Recorded by": row.get("recorded_by") or "",
                 "Distance": f"{float(row['distance_m']):.2f} m",
                 "Device": "Verified" if row.get("device_binding_hash") else "Legacy",
             }
@@ -1936,9 +2084,17 @@ def _render_manager_location(repo: AttendanceRepository, settings, course) -> No
                 f"{affected.get('timeout', 0)} students",
             ),
             (
-                "Location success",
-                f"{summary['success_rate']:.1f}%",
-                f"{summary['recovered_failures']} failures later recovered",
+                "Attendance completion",
+                f"{summary['attendance_completion_rate']:.1f}%",
+                (
+                    f"{summary['attendance_windows_completed']} / "
+                    f"{summary['attendance_windows_attempted']} student-windows"
+                ),
+            ),
+            (
+                "Unresolved",
+                summary["students_with_unresolved_failures"],
+                f"students · median {summary['median_attempts_per_window']:.1f} attempts/window",
             ),
         ]
     )
@@ -2033,7 +2189,11 @@ def _render_manager_location(repo: AttendanceRepository, settings, course) -> No
                     "Poor accuracy": row["reason_counts"].get("poor_accuracy", 0),
                     "Denied": row["reason_counts"].get("permission_denied", 0),
                     "Timeout": row["reason_counts"].get("timeout", 0),
-                    "Success": f"{row['success_rate']:.1f}%",
+                    "Completed windows": (
+                        f"{row['attendance_windows_completed']} / "
+                        f"{row['attendance_windows_attempted']}"
+                    ),
+                    "Completion": f"{row['attendance_completion_rate']:.1f}%",
                 }
                 for row in lecture_rows
             ],
@@ -2115,7 +2275,44 @@ def _render_manager_location(repo: AttendanceRepository, settings, course) -> No
             width="stretch",
             hide_index=True,
         )
-    export_signature = (int(course["id"]), selected_period, len(events))
+    location_changes = repo.list_course_location_changes(
+        course_id=int(course["id"]),
+        limit=100,
+    )
+    if location_changes:
+        _render_section_title(
+            "Location rule audit",
+            f"{len(location_changes)} immutable changes",
+        )
+        st.dataframe(
+            [
+                {
+                    "Time": str(row["created_at"])[:19],
+                    "Manager": row["actor_identifier"],
+                    "Change": str(row["change_type"]).replace("_", " ").title(),
+                    "Previous radius": f"{float(row['previous_radius_m']):.1f}m",
+                    "New radius": f"{float(row['new_radius_m']):.1f}m",
+                    "Previous point": (
+                        f"{float(row['previous_latitude']):.7f}, "
+                        f"{float(row['previous_longitude']):.7f}"
+                    ),
+                    "New point": (
+                        f"{float(row['new_latitude']):.7f}, "
+                        f"{float(row['new_longitude']):.7f}"
+                    ),
+                }
+                for row in location_changes
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+    export_signature = (
+        int(course["id"]),
+        selected_period,
+        len(events),
+        len(calibrations),
+        len(location_changes),
+    )
     prepared_export = st.session_state.get("manager_location_report")
     if st.button("Prepare location diagnostics Excel", width="stretch"):
         from attendance_app.location_reports import build_location_diagnostics_xlsx
@@ -2126,6 +2323,7 @@ def _render_manager_location(repo: AttendanceRepository, settings, course) -> No
                 course=course,
                 events=events,
                 calibrations=calibrations,
+                location_changes=location_changes,
                 reference_analysis=reference_analysis,
                 generated_at=now.isoformat(),
             ),
@@ -2259,7 +2457,14 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
         course_id,
         1000,
     )
-    pending_enrollments = repo.list_pending_device_enrollments(course_id=course_id)
+    pending_enrollments = repo.list_pending_device_enrollments(
+        course_id=course_id,
+        now_iso=now_in_app_timezone(settings).isoformat(),
+    )
+    credential_events = repo.list_credential_attempt_events(course_id=course_id, limit=500)
+    credential_failures = [
+        row for row in credential_events if str(row.get("outcome")) != "accepted"
+    ]
     students = _cached_list_students(settings.database_target, course_id)
     open_alerts = [row for row in alerts if not row.get("resolved_at")]
     protected_students = sum(bool(row.get("registered_device_id")) for row in students)
@@ -2295,6 +2500,11 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
             ),
             ("Pending", len(pending_enrollments), "device approvals"),
             ("Device events", len(audit_events), "permanent audit"),
+            (
+                "Passkey failures",
+                len(credential_failures),
+                f"{len({int(row['student_id']) for row in credential_failures})} students",
+            ),
         ]
     )
 
@@ -2345,7 +2555,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
         else:
             st.info("No open incidents.")
 
-        _render_section_title("Device enrollment", "Physical identity check")
+        _render_section_title("Passkey enrollment", "In-person identity check")
         if pending_enrollments:
             pending_labels = {
                 f"#{row['id']} · {row['university_id']} · {row['full_name']}": int(row["id"])
@@ -2385,7 +2595,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                         else (
                             "WebAuthn passkey · "
                             + (
-                                "Strict single-device binding"
+                                "Authenticator-reported single-device credential"
                                 if request_trust_level == "strict"
                                 else "Compatibility mode (synced or unclassified credential)"
                             )
@@ -2401,7 +2611,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                     (
                         "Approve credential replacement"
                         if is_credential_recovery
-                        else "Approve device"
+                        else "Approve passkey"
                     ),
                     type="primary",
                     width="stretch",
@@ -2427,7 +2637,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                         st.session_state["manager_notice"] = (
                             "Registered device credential replaced."
                             if is_credential_recovery
-                            else "Registered device approved."
+                            else "Passkey approved."
                         )
                         st.rerun()
                     except Exception as error:
@@ -2454,7 +2664,7 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
                         "Legacy—migrate by course end"
                         if str(row.get("device_auth_method") or "passkey") == "browser_key"
                         else (
-                            "Strict device"
+                            "Single-device credential"
                             if passkey_trust_level(
                                 credential_device_type=str(
                                     row.get("device_type") or ""
@@ -2528,6 +2738,32 @@ def _render_manager_security(repo: AttendanceRepository, settings, course) -> No
         )
     else:
         _empty_state("No device changes have been recorded.")
+    _render_section_title(
+        "Passkey diagnostics",
+        f"{len(credential_events)} recent attempts",
+    )
+    if credential_events:
+        st.dataframe(
+            [
+                {
+                    "Time": str(row["created_at"])[:19],
+                    "Student": row["full_name"],
+                    "Student ID": row["university_id"],
+                    "Action": str(row["action"]).title(),
+                    "Outcome": str(row["outcome"]).title(),
+                    "Error": row.get("error_name") or "",
+                    "Platform": row.get("platform") or "Unknown",
+                    "Browser": row.get("browser_family") or "Unknown",
+                    "Details": row.get("message") or "",
+                }
+                for row in credential_events
+            ],
+            width="stretch",
+            hide_index=True,
+            lazy=True,
+        )
+    else:
+        st.info("Passkey diagnostics will appear after students attempt registration or verification.")
 
 
 @st.fragment
@@ -2676,6 +2912,18 @@ def _render_manager_settings(
             _get_repository.clear()
             st.rerun()
         return
+    backup_passphrase = st.text_input(
+        "Backup encryption password",
+        type="password",
+        key="manager_backup_passphrase",
+        help=(
+            "Use at least 12 characters and store it separately. ClassPresence cannot recover "
+            "this password."
+        ),
+    )
+    backup_password_ready = len(backup_passphrase.strip()) >= 12
+    if not backup_password_ready:
+        st.info("Enter a backup password of at least 12 characters before preparing any reset or backup.")
     maintenance_col, backup_col = st.columns([1.25, 0.75], gap="large")
     with maintenance_col:
         _render_section_title("Data management", "Prepared resets are atomic")
@@ -2750,6 +2998,7 @@ def _render_manager_settings(
             type="primary",
             width="stretch",
             key="prepare_manager_reset",
+            disabled=not backup_password_ready,
         ):
             try:
                 prepared_at = now_in_app_timezone(settings).isoformat()
@@ -2763,6 +3012,7 @@ def _render_manager_settings(
                 package["backup_bytes"] = _build_reset_backup_bytes(
                     package,
                     prepared_at=prepared_at,
+                    passphrase=backup_passphrase,
                 )
                 st.session_state["manager_reset_package"] = package
                 st.session_state["manager_reset_ack"] = False
@@ -2784,10 +3034,14 @@ def _render_manager_settings(
     with backup_col:
         _render_section_title("Backup and maintenance", "Manager tools")
         st.caption(
-            "Full backups contain student records and device-security data. Store downloaded "
-            "files securely."
+            "Backups contain student records and device-security data. Downloads are encrypted "
+            "with the password above."
         )
-        if st.button("Prepare full JSON backup", width="stretch"):
+        if st.button(
+            "Prepare full JSON backup",
+            width="stretch",
+            disabled=not backup_password_ready,
+        ):
             try:
                 prepared_at = now_in_app_timezone(settings).isoformat()
                 full_backup = repo.prepare_data_reset(action="full_system")
@@ -2796,6 +3050,7 @@ def _render_manager_settings(
                     "data": _build_reset_backup_bytes(
                         full_backup,
                         prepared_at=prepared_at,
+                        passphrase=backup_passphrase,
                     ),
                 }
             except Exception as error:
@@ -2803,9 +3058,9 @@ def _render_manager_settings(
         full_backup = st.session_state.get("manager_full_backup")
         if full_backup is not None:
             st.download_button(
-                "Download full JSON backup",
+                "Download encrypted full backup",
                 data=full_backup["data"],
-                file_name=f"classpresence_full_backup_{full_backup['prepared_at'][:10]}.json",
+                file_name=f"classpresence_full_backup_{full_backup['prepared_at'][:10]}.cpbackup",
                 mime="application/json",
                 width="stretch",
                 on_click="ignore",
@@ -2893,8 +3148,8 @@ def _render_prepared_reset(
     st.download_button(
         "Download reset backup",
         data=package["backup_bytes"],
-        file_name=f"classpresence_{action}_{safe_scope}.json",
-        mime="application/json",
+        file_name=f"classpresence_{action}_{safe_scope}.cpbackup",
+        mime="application/octet-stream",
         width="stretch",
         on_click="ignore",
     )
@@ -2958,7 +3213,12 @@ def _render_prepared_reset(
         st.rerun()
 
 
-def _build_reset_backup_bytes(package: dict, *, prepared_at: str) -> bytes:
+def _build_reset_backup_bytes(
+    package: dict,
+    *,
+    prepared_at: str,
+    passphrase: str,
+) -> bytes:
     payload = {
         "format": "classpresence-reset-backup-v1",
         "prepared_at": prepared_at,
@@ -2972,12 +3232,7 @@ def _build_reset_backup_bytes(package: dict, *, prepared_at: str) -> bytes:
         "counts": package["counts"],
         "tables": package["tables"],
     }
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        indent=2,
-        default=str,
-    ).encode("utf-8")
+    return encrypt_backup_payload(payload, passphrase)
 
 
 def _render_student_entry(repo: AttendanceRepository, settings) -> None:
@@ -3158,6 +3413,19 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
     if active_schedule is None:
         _closed_check_in(repo, settings, course)
         return
+    grace_value = active_schedule.get("attendance_grace_minutes")
+    grace_minutes = int(grace_value if grace_value is not None else 10)
+    start_time = parse_hhmm(str(active_schedule["start_time"]))
+    now = now_in_app_timezone(settings)
+    on_time_deadline = (
+        now.replace(
+            hour=start_time.hour,
+            minute=start_time.minute,
+            second=0,
+            microsecond=0,
+        )
+        + timedelta(minutes=grace_minutes)
+    ).strftime("%H:%M")
 
     st.markdown(
         f"""
@@ -3169,6 +3437,7 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
                 <div><span>المقرر</span><strong class="cp-ltr">{escape(str(course['code']))}</strong></div>
                 <div><span>الطالب</span><strong class="cp-ltr">{escape(str(student['university_id']))}</strong></div>
                 <div><span>النطاق</span><strong><bdi>{float(course['radius_m']):.0f} متر</bdi></strong></div>
+                <div><span>آخر وقت للحضور الكامل</span><strong class="cp-ltr">{escape(on_time_deadline)}</strong></div>
             </div>
         </div>
         """,
@@ -3184,7 +3453,11 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
         _handle_stamp_location(stamp_geo, repo, settings, course, student, auth)
         result = st.session_state.get("student_stamp_result")
         if result:
-            css_class = "cp-result-ok" if result["success"] else "cp-result-bad"
+            css_class = (
+                "cp-result-ok"
+                if result["success"] and result.get("status") != "late"
+                else "cp-result-bad"
+            )
             st.markdown(
                 f'<div class="{css_class}" lang="ar" dir="rtl">'
                 f'{escape(_student_message(result["message"]))}</div>',
@@ -3203,7 +3476,7 @@ def _render_student_check_in(repo, settings, course, student, active_schedule) -
             [
                 (
                     "حالة الحضور",
-                    "حاضر" if existing else "بانتظار تسجيل الحضور",
+                    "تم تسجيل الحالة" if existing else "بانتظار تسجيل الحضور",
                     active_schedule["label"],
                 ),
                 ("ينتهي", active_schedule["end_time"], settings.app_timezone),
@@ -3288,6 +3561,12 @@ def _render_student_history(repo, settings, course, student) -> None:
                 "التاريخ": row["attendance_date"],
                 "المحاضرة": row["schedule_label"],
                 "الوقت": str(row["stamped_at"])[11:16],
+                "الحالة": {
+                    "present": "حاضر",
+                    "late": "متأخر — دون رصيد حضور",
+                    "instructor_present": "حاضر — تحقق المدرس",
+                    "instructor_late": "متأخر — تحقق المدرس",
+                }.get(str(row.get("attendance_status") or "present"), "مسجل"),
                 "المسافة": f"{float(row['distance_m']):.2f} متر",
             }
             for row in records
@@ -3473,6 +3752,8 @@ def _student_message(message: object) -> str:
         return f"تم إرسال رمز التحقق إلى {recipient}."
     if text.startswith("Attendance stamped successfully"):
         return "تم تسجيل حضورك بنجاح."
+    if text.startswith("Late arrival recorded"):
+        return "تم تسجيل وصولك متأخراً في السجل، ولا يُحتسب حضوراً كاملاً."
     if text.startswith("You are not in class"):
         return "أنت خارج نطاق القاعة المسموح به."
     if text.startswith("Location accuracy must be within"):
@@ -3567,28 +3848,42 @@ def _build_timetable_editor_rows(schedules, *, show_default_rows: bool) -> list[
         for template in DEFAULT_TIMETABLE_ROWS:
             label = str(template["label"])
             rows_by_label[label] = _empty_timetable_row(
-                label, str(template["start_time"]), str(template["end_time"])
+                label, str(template["start_time"]), str(template["end_time"]), 10
             )
             ordered_labels.append(label)
     for schedule in schedules:
         label = str(schedule["label"])
         if label not in rows_by_label:
             rows_by_label[label] = _empty_timetable_row(
-                label, str(schedule["start_time"]), str(schedule["end_time"])
+                label,
+                str(schedule["start_time"]),
+                str(schedule["end_time"]),
+                int(schedule.get("attendance_grace_minutes") or 10),
             )
             ordered_labels.append(label)
         row = rows_by_label[label]
         row["start_time"] = str(schedule["start_time"])
         row["end_time"] = str(schedule["end_time"])
+        row["attendance_grace_minutes"] = int(
+            schedule.get("attendance_grace_minutes")
+            if schedule.get("attendance_grace_minutes") is not None
+            else 10
+        )
         row[weekday_label(int(schedule["weekday"]))] = True
     return [rows_by_label[label] for label in ordered_labels]
 
 
-def _empty_timetable_row(label: str, start_time: str, end_time: str) -> dict[str, object]:
+def _empty_timetable_row(
+    label: str,
+    start_time: str,
+    end_time: str,
+    attendance_grace_minutes: int = 10,
+) -> dict[str, object]:
     row: dict[str, object] = {
         "label": label,
         "start_time": start_time,
         "end_time": end_time,
+        "attendance_grace_minutes": attendance_grace_minutes,
     }
     for day_name, _ in TIMETABLE_DAY_COLUMNS:
         row[day_name] = False
@@ -3603,6 +3898,11 @@ def _save_timetable(repo, settings, course_id: int, edited_rows) -> None:
         label = str(row.get("label", "") or "").strip()
         start_text = str(row.get("start_time", "") or "").strip()
         end_text = str(row.get("end_time", "") or "").strip()
+        try:
+            grace_minutes = int(row.get("attendance_grace_minutes", 10))
+        except (TypeError, ValueError):
+            st.error(f"The on-time grace for {label or 'this window'} must be a whole number.")
+            return
         selected_days = [(name, index) for name, index in TIMETABLE_DAY_COLUMNS if bool(row.get(name, False))]
         if not label and not start_text and not end_text and not selected_days:
             continue
@@ -3623,6 +3923,9 @@ def _save_timetable(repo, settings, course_id: int, edited_rows) -> None:
         if end <= start:
             st.error(f"The end time for {label} must be later than the start time.")
             return
+        if grace_minutes < 0 or grace_minutes > 60:
+            st.error(f"The on-time grace for {label} must be between 0 and 60 minutes.")
+            return
         labels.add(label)
         for _, weekday in selected_days:
             schedule_rows.append(
@@ -3631,14 +3934,28 @@ def _save_timetable(repo, settings, course_id: int, edited_rows) -> None:
                     "label": label,
                     "start_time": start.strftime("%H:%M"),
                     "end_time": end.strftime("%H:%M"),
+                    "attendance_grace_minutes": grace_minutes,
                 }
             )
+    for weekday in range(7):
+        daily = sorted(
+            (row for row in schedule_rows if int(row["weekday"]) == weekday),
+            key=lambda row: str(row["start_time"]),
+        )
+        for previous, current in zip(daily, daily[1:]):
+            if str(current["start_time"]) <= str(previous["end_time"]):
+                st.error(
+                    f"{weekday_label(weekday)} has overlapping windows: "
+                    f"{previous['label']} and {current['label']}."
+                )
+                return
     try:
         repo.sync_course_schedules(
             course_id=course_id,
             schedule_rows=schedule_rows,
             created_at=now_in_app_timezone(settings).isoformat(),
         )
+        _refresh_course_total_meetings(repo, settings, course_id)
         _invalidate_read_caches(schedules=True, reports=True)
         st.session_state[f"show_templates_{course_id}"] = False
         st.session_state[f"timetable_version_{course_id}"] = st.session_state.get(
@@ -3677,6 +3994,7 @@ def _create_live_test_window(repo, settings, course_id: int) -> None:
             end_time=ends_at.strftime("%H:%M"),
             created_at=now.isoformat(),
         )
+        _refresh_course_total_meetings(repo, settings, course_id)
         _invalidate_read_caches(schedules=True, reports=True)
         st.session_state["manager_notice"] = "Test window opened."
         st.rerun()
@@ -3727,6 +4045,7 @@ def _save_course(
                 created_at=now_in_app_timezone(settings).isoformat(),
             )
         else:
+            updated_at = now_in_app_timezone(settings).isoformat()
             repo.update_course(
                 course_id=existing_course_id,
                 code=normalized_code,
@@ -3737,7 +4056,14 @@ def _save_course(
                 longitude=longitude,
                 radius_m=radius_m,
                 absence_limit_pct=absence_limit_pct,
+                actor_identifier=str(
+                    (st.session_state.get("manager_auth") or {}).get("username", "manager")
+                ),
+                updated_at=updated_at,
             )
+        saved_course = repo.get_course_by_code(normalized_code)
+        if saved_course is not None:
+            _refresh_course_total_meetings(repo, settings, int(saved_course["id"]))
         _invalidate_read_caches(courses=True, reports=True)
         st.session_state["pending_manager_course_code"] = normalized_code
         st.session_state["course_editor_mode"] = "existing"
@@ -3746,6 +4072,24 @@ def _save_course(
         st.rerun()
     except Exception as error:
         st.error(str(error))
+
+
+def _refresh_course_total_meetings(repo, settings, course_id: int) -> None:
+    course = repo.get_course(course_id)
+    if course is None:
+        return
+    schedules = repo.list_schedules_for_course(course_id)
+    occurrences = generate_expected_occurrences(
+        str(course["start_date"]),
+        str(course["end_date"] or course["start_date"]),
+        schedules,
+        now_in_app_timezone(settings),
+        only_elapsed=False,
+    )
+    repo.update_course_total_meetings(
+        course_id=course_id,
+        total_meetings=max(1, len(occurrences)),
+    )
 
 
 def _handle_course_location(payload) -> None:
@@ -3941,7 +4285,10 @@ def _render_student_device_verification_step(repo, settings, context: dict) -> N
 def _render_student_device_registration_step(repo, settings, context: dict) -> None:
     pending_id = st.session_state.get("student_pending_enrollment_id")
     if pending_id is not None:
-        pending = repo.get_pending_device_enrollment(int(pending_id))
+        pending = repo.get_pending_device_enrollment(
+            int(pending_id),
+            now_iso=now_in_app_timezone(settings).isoformat(),
+        )
         if pending is None:
             st.session_state["student_pending_enrollment_id"] = None
         elif str(pending["status"]) == "approved":
@@ -4100,9 +4447,26 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
     title = "التحقق من الجهاز المسجل" if action == "authenticate" else "تسجيل هذا الجهاز"
     status = "تأكيد الجهاز مطلوب" if action == "authenticate" else "إعداد لمرة واحدة"
     _render_section_title(title, status, arabic=True)
+    prefer_platform = True
+    if action == "register":
+        st.info(
+            "اضغط الزر ثم استخدم قفل شاشة هذا الجهاز: بصمة الوجه أو الإصبع أو رمز PIN. "
+            "لا تبحث عن جهاز أمان أو مفتاح USB."
+        )
+        use_other_device = st.checkbox(
+            "لا أستطيع استخدام قفل شاشة هذا الجهاز؛ أظهر خيارات مفتاح المرور الأخرى",
+            key="student_passkey_cross_device",
+        )
+        prefer_platform = not use_other_device
 
     try:
-        operation = _ensure_passkey_operation(repo, settings, context, action=action)
+        operation = _ensure_passkey_operation(
+            repo,
+            settings,
+            context,
+            action=action,
+            prefer_platform=prefer_platform,
+        )
     except Exception as error:
         st.error(_student_message(error))
         return
@@ -4120,6 +4484,15 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
     st.session_state["student_passkey_processed"] = operation["id"]
 
     if payload.get("error"):
+        _record_passkey_attempt(
+            repo,
+            settings,
+            context,
+            payload,
+            action=action,
+            outcome="error",
+            message=str(payload["error"]),
+        )
         st.session_state["student_passkey_error"] = str(payload["error"])
         st.session_state["student_passkey_operation"] = None
         st.rerun()
@@ -4137,6 +4510,15 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
                 expected_origin=operation["origin"],
             )
             st.session_state["student_passkey_verified"] = verified_device
+            _record_passkey_attempt(
+                repo,
+                settings,
+                context,
+                payload,
+                action=action,
+                outcome="accepted",
+                message="Passkey verification completed.",
+            )
             st.session_state["student_passkey_operation"] = None
             st.rerun()
 
@@ -4151,13 +4533,61 @@ def _render_student_passkey_step(repo, settings, context: dict, *, action: str) 
             expected_origin=operation["origin"],
         )
         st.session_state["student_pending_enrollment_id"] = pending_id
+        _record_passkey_attempt(
+            repo,
+            settings,
+            context,
+            payload,
+            action=action,
+            outcome="accepted",
+            message="Passkey registration completed; instructor approval is pending.",
+        )
         st.session_state["student_passkey_operation"] = None
         _invalidate_read_caches(security=True)
         st.rerun()
     except Exception as error:
+        _record_passkey_attempt(
+            repo,
+            settings,
+            context,
+            payload,
+            action=action,
+            outcome="rejected",
+            message=str(error),
+        )
         st.session_state["student_passkey_error"] = str(error)
         st.session_state["student_passkey_operation"] = None
         st.rerun()
+
+
+def _record_passkey_attempt(
+    repo,
+    settings,
+    context: dict,
+    payload: dict,
+    *,
+    action: str,
+    outcome: str,
+    message: str,
+) -> None:
+    try:
+        schedule_id = int(context.get("schedule_id") or 0)
+        repo.create_credential_attempt_event(
+            course_id=int(context["course_id"]),
+            student_id=int(context["student_id"]),
+            schedule_id=schedule_id if schedule_id > 0 else None,
+            attendance_date=str(context.get("attendance_date") or ""),
+            action=action,
+            outcome=outcome,
+            error_name=str(payload.get("error_name") or ""),
+            message=message,
+            platform=str(payload.get("platform") or ""),
+            browser_family=browser_family(str(payload.get("user_agent") or "")),
+            created_at=now_in_app_timezone(settings).isoformat(),
+        )
+    except Exception:
+        # Operational diagnostics must not block authentication or enrollment.
+        return
 
 
 def _render_passkey_setup_guidance() -> None:
@@ -4174,7 +4604,14 @@ def _render_passkey_setup_guidance() -> None:
         )
 
 
-def _ensure_passkey_operation(repo, settings, context: dict, *, action: str) -> dict:
+def _ensure_passkey_operation(
+    repo,
+    settings,
+    context: dict,
+    *,
+    action: str,
+    prefer_platform: bool = True,
+) -> dict:
     rp_id, origin = _passkey_relying_party(settings)
     signature = (
         action,
@@ -4182,6 +4619,7 @@ def _ensure_passkey_operation(repo, settings, context: dict, *, action: str) -> 
         str(context["device_binding_hash"]),
         rp_id,
         origin,
+        prefer_platform,
     )
     existing = st.session_state.get("student_passkey_operation")
     if existing is not None and tuple(existing.get("signature", ())) == signature:
@@ -4202,6 +4640,7 @@ def _ensure_passkey_operation(repo, settings, context: dict, *, action: str) -> 
             student_id=int(context["student_id"]),
             university_id=str(context["student_university_id"]),
             student_name=str(context["student_name"]),
+            prefer_platform=prefer_platform,
         )
 
     operation = {
@@ -4286,6 +4725,7 @@ def _handle_stamp_location(payload, repo, settings, course, student, auth: dict)
     st.session_state["student_stamp_result"] = {
         "success": result.success,
         "message": result.message,
+        "status": result.status,
     }
     if result.success:
         _invalidate_read_caches(attendance=True, reports=True)
@@ -4303,6 +4743,7 @@ def _reset_student_access(*, clear_id: bool) -> None:
     st.session_state["student_passkey_operation"] = None
     st.session_state["student_passkey_processed"] = None
     st.session_state["student_passkey_error"] = None
+    st.session_state["student_passkey_cross_device"] = False
     st.session_state["student_browser_key_operation"] = None
     st.session_state["student_browser_key_processed"] = None
     st.session_state["student_browser_key_error"] = None
@@ -4372,6 +4813,7 @@ def _init_session_state() -> None:
         "manager_prepared_report": None,
         "manager_reset_package": None,
         "manager_full_backup": None,
+        "manager_backup_passphrase": "",
         "manager_reset_ack": False,
         "manager_reset_confirmation": "",
         "manager_reset_password": "",
@@ -4399,6 +4841,7 @@ def _init_session_state() -> None:
         "student_passkey_operation": None,
         "student_passkey_processed": None,
         "student_passkey_error": None,
+        "student_passkey_cross_device": False,
         "student_browser_key_operation": None,
         "student_browser_key_processed": None,
         "student_browser_key_error": None,
