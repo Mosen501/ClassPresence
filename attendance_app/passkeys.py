@@ -21,6 +21,8 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+MODULE_API_VERSION = "2026-09-04-2"
+
 
 @dataclass(frozen=True)
 class RegisteredPasskey:

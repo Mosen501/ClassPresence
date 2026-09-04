@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - sqlite-only local/test environments
 
 
 Record = dict[str, Any]
+MODULE_API_VERSION = "2026-09-04-2"
 SCHEMA_VERSION = "2026-09-04-1"
 BROWSER_KEY_RECOVERY_REASON = "registered_browser_credential_missing"
 

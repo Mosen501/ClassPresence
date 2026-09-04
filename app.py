@@ -17,10 +17,13 @@ from attendance_app import database as database_module
 from attendance_app import passkeys as passkeys_module
 from attendance_app import services as services_module
 
+EXPECTED_MODULE_API_VERSION = "2026-09-04-2"
+
 # Streamlit Cloud may rerun app.py while imported local modules still come from
 # the previous deployment. Refresh dependencies before importing newly added APIs.
 if (
-    not hasattr(database_module, "DatabaseUnavailableError")
+    getattr(database_module, "MODULE_API_VERSION", "") != EXPECTED_MODULE_API_VERSION
+    or not hasattr(database_module, "DatabaseUnavailableError")
     or not hasattr(database_module, "BROWSER_KEY_RECOVERY_REASON")
     or not hasattr(database_module.AttendanceRepository, "list_location_attempt_events")
     or not hasattr(database_module.AttendanceRepository, "create_pending_device_enrollment")
@@ -28,9 +31,16 @@ if (
     database_module = reload(database_module)
 if not hasattr(components_module, "manager_geo_capture"):
     components_module = reload(components_module)
-if not hasattr(passkeys_module, "passkey_trust_level"):
+if (
+    getattr(passkeys_module, "MODULE_API_VERSION", "") != EXPECTED_MODULE_API_VERSION
+    or not hasattr(passkeys_module, "passkey_trust_level")
+):
     passkeys_module = reload(passkeys_module)
-if not hasattr(services_module, "request_student_passkey_enrollment"):
+if (
+    getattr(services_module, "MODULE_API_VERSION", "") != EXPECTED_MODULE_API_VERSION
+    or not hasattr(services_module, "request_student_passkey_enrollment")
+    or not hasattr(services_module, "record_instructor_attendance_exception")
+):
     services_module = reload(services_module)
 
 from attendance_app.backups import encrypt_backup_payload

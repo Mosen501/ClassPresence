@@ -35,6 +35,8 @@ from attendance_app.utils import (
     parse_iso_date,
 )
 
+MODULE_API_VERSION = "2026-09-04-2"
+
 
 @dataclass(frozen=True)
 class OTPRequestResult:
